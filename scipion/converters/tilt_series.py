@@ -37,8 +37,8 @@ class ScipionTiltSeries:
         return ts_id + "_Classes"
 
 
-f_path = Path("/home/jjimenez/ScipionUserData/projects/chlamy/Runs/002094_ProtAreTomoAlignRecon")
-db_fn = f_path / 'tiltseries.sqlite'
-sci_tsm = ScipionTiltSeries()
-sci_tsm.scipion_to_cets(db_fn)
+# f_path = Path("/home/jjimenez/ScipionUserData/projects/chlamy/Runs/002094_ProtAreTomoAlignRecon")
+# db_fn = f_path / 'tiltseries.sqlite'
+# sci_tsm = ScipionTiltSeries()
+# sci_tsm.scipion_to_cets(db_fn)
 
