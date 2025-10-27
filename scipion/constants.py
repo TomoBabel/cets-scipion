@@ -1,24 +1,23 @@
-
 # Master table names
-CLASSES_TBL = 'Classes'
-OBJECTS_TBL = 'Objects'
-PROPERTIES_TBL = 'Properties'
+CLASSES_TBL = "Classes"
+OBJECTS_TBL = "Objects"
+PROPERTIES_TBL = "Properties"
 
 # Master table columns
-LABEL_PROPERTY = 'label_property'
-COLUMN_NAME = 'column_name'
-PROP_KEY = 'key'
-PROP_VALUE = 'value'
+LABEL_PROPERTY = "label_property"
+COLUMN_NAME = "column_name"
+PROP_KEY = "key"
+PROP_VALUE = "value"
 
 # Field names
-TS_ID = '_tsId'
-FILE_NAME = '_filename'
-INDEX = '_index'
-ACQUISITION_ORDER = '_acqOrder'
-TILT_ANGLE = '_tiltAngle'
-ACCUMULATED_DOSE = '_acquisition._accumDose'
-TRANSFORMATION_MATRIX = '_transform._matrix'
-ODD_EVEN_FN = '_oddEvenFileNames'
+TS_ID = "_tsId"
+FILE_NAME = "_filename"
+INDEX = "_index"
+ACQUISITION_ORDER = "_acqOrder"
+TILT_ANGLE = "_tiltAngle"
+ACCUMULATED_DOSE = "_acquisition._accumDose"
+TRANSFORMATION_MATRIX = "_transform._matrix"
+ODD_EVEN_FN = "_oddEvenFileNames"
 
 TILT_SERIES_FIELDS = [
     TS_ID,
@@ -28,5 +27,7 @@ TILT_SERIES_FIELDS = [
     TILT_ANGLE,
     ACCUMULATED_DOSE,
     TRANSFORMATION_MATRIX,
-    ODD_EVEN_FN
+    ODD_EVEN_FN,
 ]
+
+CTF_CORRECTED = "_ctfCorrected"
