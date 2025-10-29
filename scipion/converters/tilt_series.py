@@ -33,7 +33,7 @@ from scipion.constants import (
     ODD_EVEN_FN,
     CTF_CORRECTED,
 )
-from scipion.utils.utils import validate_file
+from scipion.utils.utils import validate_file, write_ts_set_yaml
 from scipion.utils.utils_sqlite import connect_db, map_classes_table, get_from_obj_tbl
 
 
@@ -44,13 +44,13 @@ class ScipionTiltSeries:
 
     def scipion_to_cets(
         self,
-        out_yaml_file: str | Path | None = None,
+        out_directory: str | None = None,
     ) -> List[TiltSeries] | None:
         """Converts tilt-series from Scipion into CETS metadata.
 
-        :param out_yaml_file: name of the yaml file in which the tilt-series
-        metadata will be written.
-        :type out_yaml_file: pathlib.Path or str, optional
+        :param out_directory: name of the directory in which the tilt-series
+        .yaml files (one per tilt-series) will be written.
+        :type out_directory: pathlib.Path or str, optional
         """
         db_connection = connect_db(self.db_path)
         if db_connection is not None:
@@ -106,6 +106,8 @@ class ScipionTiltSeries:
                     )
                     tilt_series_list.append(ts)
 
+                if out_directory:
+                    write_ts_set_yaml(tilt_series_list, Path(out_directory))
                 return tilt_series_list
         return None
 
@@ -198,9 +200,10 @@ class ScipionTiltSeries:
         )
 
 
-f_path = Path(
-    "/home/jjimenez/ScipionUserData/projects/chlamy/Runs/002094_ProtAreTomoAlignRecon"
-)
-db_fn = f_path / "tiltseries.sqlite"
-sci_tsm = ScipionTiltSeries(db_fn)
-sci_tsm.scipion_to_cets()
+# scratch_dir = "/home/jjimenez/CZII/cets_scratch_dir"
+# f_path = Path(
+#     "/home/jjimenez/ScipionUserData/projects/chlamy/Runs/002094_ProtAreTomoAlignRecon/"
+# )
+# db_fn = f_path / "tiltseries_3.sqlite"
+# sci_tsm = ScipionTiltSeries(db_fn)
+# sci_tsm.scipion_to_cets(out_directory=scratch_dir)
