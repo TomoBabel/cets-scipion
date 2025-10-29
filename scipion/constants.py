@@ -9,6 +9,7 @@ COLUMN_NAME = "column_name"
 PROP_KEY = "key"
 PROP_VALUE = "value"
 
+# TILT-SERIES ##########################################
 # Field names
 TS_ID = "_tsId"
 FILE_NAME = "_filename"
@@ -31,3 +32,17 @@ TILT_SERIES_FIELDS = [
 ]
 
 CTF_CORRECTED = "_ctfCorrected"
+
+# CTF ###############################################
+DEFOCUS_U = "_defocusU"
+DEFOCUS_V = "_defocusV"
+DEFOCUS_ANGLE = "_defocusAngle"
+PHASE_SHIFT = "_phaseShift"
+
+CTF_TOMO_SERIES_FIELDS = [
+    DEFOCUS_U,
+    DEFOCUS_V,
+    DEFOCUS_ANGLE,
+    PHASE_SHIFT,
+    ACQUISITION_ORDER,
+]

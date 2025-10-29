@@ -1,6 +1,6 @@
 import sqlite3
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Any
 
 from scipion.constants import (
     CLASSES_TBL,
@@ -80,10 +80,8 @@ def get_from_obj_tbl(
     )
 
 
-# f_path = Path("/home/jjimenez/ScipionUserData/projects/chlamy/Runs/000002_ProtImportTsMovies/")
-# db__path = f_path / 'TiltSeriesM.sqlite'
-#
-# with _connect_db(db__path) as connection:
-#     dc = map_classes_table(connection)
-#     dp = map_properties_table(connection)
-#     read_scipion_sqlite_patch(db__path)
+def get_row_value(
+    row: sqlite3.Row, mapped_class_dict: Dict[str, str], field: str
+) -> Any:
+    mapped_field = mapped_class_dict.get(field, None)
+    return row[mapped_field] if mapped_field in row.keys() else None

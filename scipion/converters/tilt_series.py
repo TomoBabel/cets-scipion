@@ -1,5 +1,4 @@
 import ast
-import os
 import sqlite3
 from pathlib import Path
 from typing import Dict, List
@@ -19,6 +18,7 @@ from cets_data_model.models.models import (
     Affine,
     Matrix3x3,
     TiltSeries,
+    CTFMetadata,
 )
 from cets_data_model.utils.image_utils import get_mrc_info
 from scipion.constants import (
@@ -32,25 +32,36 @@ from scipion.constants import (
     TRANSFORMATION_MATRIX,
     ODD_EVEN_FN,
     CTF_CORRECTED,
+    CLASSES_TBL,
+    OBJECTS_TBL,
 )
-from scipion.utils.utils import validate_file, write_ts_set_yaml
-from scipion.utils.utils_sqlite import connect_db, map_classes_table, get_from_obj_tbl
+from scipion.converters.base_converter import BaseConverter
+from scipion.utils.utils import write_ts_set_yaml
+from scipion.utils.utils_sqlite import (
+    connect_db,
+    map_classes_table,
+    get_from_obj_tbl,
+    get_row_value,
+)
 
 
-class ScipionTiltSeries:
-    def __init__(self, sqlite_path: os.PathLike):
-        self.db_path = validate_file(sqlite_path, ".sqlite")
-        self.scipion_prj_path = self._get_prj_path()
-
+class ScipionTiltSeries(BaseConverter):
     def scipion_to_cets(
         self,
+        ctf_md: Dict[str, List[CTFMetadata]] | None = None,
         out_directory: str | None = None,
     ) -> List[TiltSeries] | None:
         """Converts tilt-series from Scipion into CETS metadata.
 
+        :param ctf_md: dictionary of type key: tilt-series id, value: list of CTF Metadata
+        containing the CTFMetadata of corresponding to all the tilt-images that compose the tilt-series
+        of id equal to the key of the dictionary. It can be obtained using the method
+        ScipionCtfSeries.scipion_to_cets.
+        :type ctf_md: Dict[str, List[CTFMetadata]] or None, optional, Defaults to None
+
         :param out_directory: name of the directory in which the tilt-series
         .yaml files (one per tilt-series) will be written.
-        :type out_directory: pathlib.Path or str, optional
+        :type out_directory: pathlib.Path or str, optional, Defaults to None
         """
         db_connection = connect_db(self.db_path)
         if db_connection is not None:
@@ -68,9 +79,7 @@ class ScipionTiltSeries:
                 )
 
                 # Sqlite fields of the data to be read from each tilt-image
-                ti_sql_fields = ", ".join(
-                    [f'"{ts_class_dict[field]}"' for field in TILT_SERIES_FIELDS]
-                )
+                ti_sql_fields = self._get_sql_fields(ts_class_dict, TILT_SERIES_FIELDS)
 
                 # Coordinate system
                 axis_xy = Axis(
@@ -83,7 +92,9 @@ class ScipionTiltSeries:
                 cursor = conn.cursor()
                 tilt_series_list = []
                 for i, ts_id in enumerate(ts_ids):
-                    print(f"Loading tsId = {ts_id}")
+                    print(f"tsId = {ts_id}. Loading the tilt-series...")
+                    # Manage the CTFMetadata
+                    ctf_md_list = ctf_md.get(ts_id, None) if ctf_md else None
                     # Read the tilt-images table
                     ti_list = []
                     tilt_images_table_name = self._get_ts_obj_tbl_name(ts_id)
@@ -93,10 +104,10 @@ class ScipionTiltSeries:
                         ti = self._ti_from_sqlite_row(
                             row, ts_class_dict, coordinate_systems
                         )
+                        self._add_ctf_md(ti, i, ctf_md_list)
                         ti_list.append(ti)
 
                     # Tilt-series
-                    print(cursor.fetchall())
                     ts = TiltSeries(
                         path=ti_list[-1].path,
                         ts_id=ts_id,
@@ -118,27 +129,28 @@ class ScipionTiltSeries:
         coord_system: CoordinateSystem,
     ) -> TiltImage:
         # Read image info
-        ts_fn = self.scipion_prj_path / row[ts_class_dict[FILE_NAME]]
+        ts_file = get_row_value(row, ts_class_dict, FILE_NAME)
+        ts_fn = self.scipion_prj_path / ts_file if ts_file else self.scipion_prj_path
         img_info = get_mrc_info(ts_fn)
         # Get the odd / even filenames
         even_fn, odd_fn = None, None
-        odd_even_fn = row[ts_class_dict[ODD_EVEN_FN]]
+        odd_even_fn = get_row_value(row, ts_class_dict, ODD_EVEN_FN)
         if odd_even_fn:
             even_fn, odd_fn = sorted(odd_even_fn.split(","))
         # Get the transformation matrix
-        tr_matrix_str = row[ts_class_dict[TRANSFORMATION_MATRIX]]
+        tr_matrix_str = get_row_value(row, ts_class_dict, TRANSFORMATION_MATRIX)
         tr_matrix = np.array(ast.literal_eval(tr_matrix_str))
 
         # Create the tilt-image
         return TiltImage(
-            ts_id=row[ts_class_dict[TS_ID]],
+            ts_id=get_row_value(row, ts_class_dict, TS_ID),
             path=str(ts_fn),
             even_path=even_fn,
             odd_path=odd_fn,
-            acquisition_order=row[ts_class_dict[ACQUISITION_ORDER]],
-            section=row[ts_class_dict[INDEX]],
-            nominal_tilt_angle=row[ts_class_dict[TILT_ANGLE]],
-            accumulated_dose=row[ts_class_dict[ACCUMULATED_DOSE]],
+            acquisition_order=get_row_value(row, ts_class_dict, ACQUISITION_ORDER),
+            section=get_row_value(row, ts_class_dict, INDEX),
+            nominal_tilt_angle=get_row_value(row, ts_class_dict, TILT_ANGLE),
+            accumulated_dose=get_row_value(row, ts_class_dict, ACCUMULATED_DOSE),
             # ctf_metadata=None,  # TODO: fill this
             width=img_info.size_x,
             height=img_info.size_y,
@@ -151,22 +163,11 @@ class ScipionTiltSeries:
 
     @staticmethod
     def _get_ts_classes_tbl_name(ts_id: str) -> str:
-        return ts_id + "_Classes"
+        return f"{ts_id}_{CLASSES_TBL}"
 
     @staticmethod
     def _get_ts_obj_tbl_name(ts_id: str) -> str:
-        return ts_id + "_Objects"
-
-    def _get_prj_path(self) -> Path:
-        orig_dir = os.getcwd()
-        # Move to the project directory and get the full path
-        os.chdir(
-            self.db_path.parent / ".." / ".."
-        )  # PathToScipionUserData/projects/ProjectName/Runs/ProtocolDir/extra/sqlite
-        prj_path = os.getcwd()
-        # Move to the original working dir
-        os.chdir(orig_dir)
-        return Path(prj_path)
+        return f"{ts_id}_{OBJECTS_TBL}"
 
     @staticmethod
     def _gen_translation_transform(transformation_matrix: np.ndarray) -> Translation:
@@ -199,11 +200,6 @@ class ScipionTiltSeries:
             output="Tilt-image",
         )
 
-
-# scratch_dir = "/home/jjimenez/CZII/cets_scratch_dir"
-# f_path = Path(
-#     "/home/jjimenez/ScipionUserData/projects/chlamy/Runs/002094_ProtAreTomoAlignRecon/"
-# )
-# db_fn = f_path / "tiltseries_3.sqlite"
-# sci_tsm = ScipionTiltSeries(db_fn)
-# sci_tsm.scipion_to_cets(out_directory=scratch_dir)
+    @staticmethod
+    def _add_ctf_md(ti: TiltImage, index: int, ctf_md: List[CTFMetadata] | None = None):
+        ti.ctf_metadata = ctf_md[index] if ctf_md else None
