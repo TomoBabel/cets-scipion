@@ -45,13 +45,13 @@ from scipion.utils.utils_sqlite import (
 )
 
 
-class ScipionTiltSeries(BaseConverter):
+class ScipionSetOfTiltSeries(BaseConverter):
     def scipion_to_cets(
         self,
         ctf_md: Dict[str, List[CTFMetadata]] | None = None,
         out_directory: str | None = None,
     ) -> List[TiltSeries] | None:
-        """Converts tilt-series from Scipion into CETS metadata.
+        """Converts a set of tilt-series from Scipion into CETS metadata.
 
         :param ctf_md: dictionary of type key: tilt-series id, value: list of CTF Metadata
         containing the CTFMetadata of corresponding to all the tilt-images that compose the tilt-series
@@ -151,7 +151,6 @@ class ScipionTiltSeries(BaseConverter):
             section=get_row_value(row, ts_class_dict, INDEX),
             nominal_tilt_angle=get_row_value(row, ts_class_dict, TILT_ANGLE),
             accumulated_dose=get_row_value(row, ts_class_dict, ACCUMULATED_DOSE),
-            # ctf_metadata=None,  # TODO: fill this
             width=img_info.size_x,
             height=img_info.size_y,
             coordinate_systems=[coord_system],

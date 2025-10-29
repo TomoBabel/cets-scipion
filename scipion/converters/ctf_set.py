@@ -22,17 +22,11 @@ from scipion.utils.utils_sqlite import (
 )
 
 
-class ScipionCtfSeries(BaseConverter):
+class ScipionSetOfCtf(BaseConverter):
     def scipion_to_cets(
         self,
-        out_directory: str | None = None,
     ) -> Dict[str, List[CTFMetadata]] | None:
-        """Converts tilt-series from Scipion into CETS metadata.
-
-        :param out_directory: name of the directory in which the CTF
-        .yaml files (one per CTFTomoSeries) will be written.
-        :type out_directory: pathlib.Path or str, optional
-        """
+        """Converts a set of CTF from Scipion into CETS metadata."""
         db_connection = connect_db(self.db_path)
         if db_connection is not None:
             with db_connection as conn:

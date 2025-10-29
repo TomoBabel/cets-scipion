@@ -46,3 +46,8 @@ CTF_TOMO_SERIES_FIELDS = [
     PHASE_SHIFT,
     ACQUISITION_ORDER,
 ]
+
+# TOMOGRAM ###########################################
+ODD_EVEN_TOMOS_FN = "_halfMapFilenames"
+
+TOMOGRAM_FIELDS = [TS_ID, FILE_NAME, CTF_CORRECTED, ODD_EVEN_TOMOS_FN]
