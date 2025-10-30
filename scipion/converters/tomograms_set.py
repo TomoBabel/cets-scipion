@@ -1,3 +1,6 @@
+from pathlib import Path
+from typing import List
+
 from cets_data_model.models.models import Tomogram
 from cets_data_model.utils.image_utils import get_mrc_info
 from scipion.constants import (
@@ -9,12 +12,20 @@ from scipion.constants import (
     CTF_CORRECTED,
 )
 from scipion.converters.base_converter import BaseConverter
+from scipion.utils.utils import write_tomo_set_yaml
 from scipion.utils.utils_sqlite import connect_db, map_classes_table, get_row_value
 
 
 class ScipionSetOfTomograms(BaseConverter):
-    def scipion_to_cets(self):
-        """Converts a set of tomograms from Scipion into CETS metadata."""
+    def scipion_to_cets(
+        self, out_directory: str | None = None
+    ) -> List[Tomogram] | None:
+        """Converts a set of tomograms from Scipion into CETS metadata.
+
+        :param out_directory: name of the directory in which the tilt-series
+        .yaml files (one per tilt-series) will be written.
+        :type out_directory: pathlib.Path or str, optional, Defaults to None
+        """
         db_connection = connect_db(self.db_path)
         if db_connection is not None:
             with db_connection as conn:
@@ -61,3 +72,7 @@ class ScipionSetOfTomograms(BaseConverter):
                         ),
                     )
                     tomo_list.append(tomo)
+                if out_directory:
+                    write_tomo_set_yaml(tomo_list, Path(out_directory))
+                return tomo_list
+        return None
