@@ -54,7 +54,6 @@ class ScipionSetOfCtf(BaseConverter):
                     query = f'SELECT {ctf_sql_fields} FROM "{ctf_list_table_name}"'
                     cursor.execute(query)  # execute the query
                     for row in cursor.fetchall():
-                        print(dict(row))
                         ctf = self._ctf_from_sqlite_row(row, ctf_tomo_class_dict)
                         ctf_list.append(ctf)
                     ctf_tomo_dict[ts_id] = ctf_list
