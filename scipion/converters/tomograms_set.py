@@ -1,5 +1,6 @@
+import os
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from cets_data_model.models.models import Tomogram
 from cets_data_model.utils.image_utils import get_mrc_info
@@ -12,20 +13,32 @@ from scipion.constants import (
     CTF_CORRECTED,
 )
 from scipion.converters.base_converter import BaseConverter
+from scipion.converters.coodinates3d import ScipionSetOfCoordinates3D
 from scipion.utils.utils import write_tomo_set_yaml
 from scipion.utils.utils_sqlite import connect_db, map_classes_table, get_row_value
 
 
 class ScipionSetOfTomograms(BaseConverter):
     def scipion_to_cets(
-        self, out_directory: str | None = None
+        self,
+        coordinates_sqlite_path: Optional[os.PathLike] = None,
+        out_directory: Optional[str] = None,
     ) -> List[Tomogram] | None:
         """Converts a set of tomograms from Scipion into CETS metadata.
 
+        :param coordinates_sqlite_path: path of the sqlite file containing the
+        coordinates picked.
+        :type coordinates_sqlite_path: pathlib.Path or str, optional, Defaults to None.
+
         :param out_directory: name of the directory in which the tilt-series
         .yaml files (one per tilt-series) will be written.
-        :type out_directory: pathlib.Path or str, optional, Defaults to None
+        :type out_directory: pathlib.Path or str, optional, Defaults to None.
         """
+        coordinates_reader = (
+            ScipionSetOfCoordinates3D(coordinates_sqlite_path)
+            if coordinates_sqlite_path
+            else None
+        )
         db_connection = connect_db(self.db_path)
         if db_connection is not None:
             with db_connection as conn:
@@ -42,6 +55,7 @@ class ScipionSetOfTomograms(BaseConverter):
                 cursor.execute(query)  # execute the query
                 tomo_list = []
                 for row in cursor:
+                    tomo_id = get_row_value(row, tomo_set_class_dict, TS_ID)
                     # Read tomogram info
                     tomo_file = get_row_value(row, tomo_set_class_dict, FILE_NAME)
                     tomo_fn = (
@@ -57,8 +71,15 @@ class ScipionSetOfTomograms(BaseConverter):
                     )
                     if odd_even_fn:
                         even_fn, odd_fn = sorted(odd_even_fn.split(","))
+                    # Manage the coordinates
+                    coordinates3d_set = (
+                        coordinates_reader.scipion_to_cets(tomo_id)
+                        if coordinates_reader
+                        else None
+                    )
+
                     tomo = Tomogram(
-                        tomo_id=get_row_value(row, tomo_set_class_dict, TS_ID),
+                        tomo_id=tomo_id,
                         path=str(tomo_fn),
                         even_path=even_fn,
                         odd_path=odd_fn,
@@ -70,6 +91,7 @@ class ScipionSetOfTomograms(BaseConverter):
                         ctf_corrected=get_row_value(
                             row, tomo_set_class_dict, CTF_CORRECTED
                         ),
+                        coordinates=coordinates3d_set,
                     )
                     tomo_list.append(tomo)
                 if out_directory:

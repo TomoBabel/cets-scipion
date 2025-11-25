@@ -7,12 +7,13 @@ from scipion.converters.tomograms_set import ScipionSetOfTomograms
 ### SCIPION TO CETS #################################################################
 # Files
 scratch_dir = "/home/jjimenez/CZII/cets_scratch_dir"
-f_path = Path(
-    "/home/jjimenez/ScipionUserData/projects/chlamy/Runs/003123_ProtAreTomoAlignRecon/"
+f_path = Path("/home/jjimenez/ScipionUserData/projects/czii_re5_extract_subtomos/")
+ctf_db_path = f_path / "Runs/000084_ProtImportTsCTF/ctftomoseries.sqlite"
+ts_db_path = f_path / "Runs/000128_ProtImodImportTransformationMatrix/tiltseries.sqlite"
+tomo_db_path = f_path / "Runs/000821_ProtImportTomograms/tomograms.sqlite"
+coords_db_path = (
+    f_path / "Runs/000872_ProtImportCoordinates3DFromStar/coordinates3d.sqlite"
 )
-ctf_db_path = f_path / "ctftomoseries.sqlite"
-ts_db_path = f_path / "tiltseries.sqlite"
-tomo_db_path = f_path / "tomograms.sqlite"
 
 # CTF metadata
 sci_ctf_set = ScipionSetOfCtf(ctf_db_path)

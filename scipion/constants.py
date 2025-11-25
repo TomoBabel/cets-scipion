@@ -49,8 +49,9 @@ CTF_TOMO_SERIES_FIELDS = [
 
 # TOMOGRAM ###########################################
 ODD_EVEN_TOMOS_FN = "_halfMapFilenames"
+ORIGIN_MATRIX = "_origin._matrix"
 
-TOMOGRAM_FIELDS = [TS_ID, FILE_NAME, CTF_CORRECTED, ODD_EVEN_TOMOS_FN]
+TOMOGRAM_FIELDS = [TS_ID, FILE_NAME, CTF_CORRECTED, ODD_EVEN_TOMOS_FN, ORIGIN_MATRIX]
 
 # COORDINATES 3D #####################################
 TOMO_ID = "_tomoId"
