@@ -1,4 +1,15 @@
-from cets_data_model.models.models import CoordinateSet3D
+import ast
+from typing import List
+from cets_data_model.models.models import (
+    Particle3DSet,
+    Affine,
+    CoordinateSystem,
+    Axis,
+    AxisType,
+    AxisUnit,
+    SpaceAxis,
+    Particle3D,
+)
 from scipion.constants import (
     COORD_3D_FIELDS,
     OBJECTS_TBL,
@@ -6,30 +17,34 @@ from scipion.constants import (
     COORD_X,
     COORD_Y,
     COORD_Z,
+    EULER_MATRIX,
 )
 from scipion.converters.base_converter import BaseConverter
 from scipion.utils.utils_sqlite import connect_db, map_classes_table, get_row_value
+
+
+coordinates_system = [
+    CoordinateSystem(
+        name="Scipion",
+        axes=[
+            Axis(name=SpaceAxis.ZYZ, axis_type=AxisType.space, axis_unit=AxisUnit.pixel)
+        ],
+    )
+]
 
 
 class ScipionSetOfCoordinates3D(BaseConverter):
     def scipion_to_cets(
         self,
         tomo_id: str,
-        # origin3d: Vector3D,
         # out_directory: str | None = None
-    ) -> CoordinateSet3D | None:
+    ) -> Particle3DSet | None:
         """Converts the set of coordinates corresponding to the introduced tomogram identifier
         into CETS metadata.
 
         :param tomo_id: tomogram identifier. It is used to indicate the tomogram from which the
         coordinates will be converted, as in Scipion the coordinates from all the tomorgams are
         stored together.
-
-        # :param origin3d: Vector3D containing the
-        #
-        # # :param out_directory: name of the directory in which the tilt-series
-        # # .yaml files (one per tilt-series) will be written.
-        # # :type out_directory: pathlib.Path or str, optional, Defaults to None
         """
         db_connection = connect_db(self.db_path)
         if db_connection is not None:
@@ -43,21 +58,42 @@ class ScipionSetOfCoordinates3D(BaseConverter):
                 )
 
                 cursor = conn.cursor()
-                query = f'SELECT {coord_sql_fields} FROM "{OBJECTS_TBL}" WHERE {TOMO_ID}="{tomo_id}"'
+                tomo_id_col_name = coord_set_class_dict[TOMO_ID]
+                query = f'SELECT {coord_sql_fields} FROM "{OBJECTS_TBL}" WHERE {tomo_id_col_name}="{tomo_id}"'
                 cursor.execute(query)  # execute the query
                 coord_list = []
                 for row in cursor:
-                    coord_list.append(
-                        [
+                    euler_matrix = ast.literal_eval(
+                        get_row_value(row, coord_set_class_dict, EULER_MATRIX)
+                    )
+                    coordinate3d = Particle3D(
+                        position=[
                             get_row_value(row, coord_set_class_dict, COORD_X),
                             get_row_value(row, coord_set_class_dict, COORD_Y),
                             get_row_value(row, coord_set_class_dict, COORD_Z),
-                        ]
+                        ],
+                        coordinate_transformations=self._gen_coordinate_transform(
+                            euler_matrix
+                        ),
                     )
-                coordinates = CoordinateSet3D(
-                    coordinates=coord_list,
+                    coord_list.append(coordinate3d)
+                coordinates = Particle3DSet(
+                    particles=coord_list,
+                    coordinate_systems=coordinates_system,
                 )
                 # if out_directory:
                 #     write_coords_set_yaml(coordinates, Path(out_directory))
                 return coordinates
         return None
+
+    @staticmethod
+    def _gen_coordinate_transform(euler_matrix: List[List[float]]) -> List[Affine]:
+        angular_matrix = [
+            sublist[:3] for sublist in euler_matrix[:3]
+        ]  # Take only the angular 3x3 sub-matrix
+        return [
+            Affine(
+                name="Coordinate orientation",
+                affine=angular_matrix,
+            )
+        ]

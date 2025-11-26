@@ -49,14 +49,14 @@ CTF_TOMO_SERIES_FIELDS = [
 
 # TOMOGRAM ###########################################
 ODD_EVEN_TOMOS_FN = "_halfMapFilenames"
-ORIGIN_MATRIX = "_origin._matrix"
 
-TOMOGRAM_FIELDS = [TS_ID, FILE_NAME, CTF_CORRECTED, ODD_EVEN_TOMOS_FN, ORIGIN_MATRIX]
+TOMOGRAM_FIELDS = [TS_ID, FILE_NAME, CTF_CORRECTED, ODD_EVEN_TOMOS_FN]
 
 # COORDINATES 3D #####################################
-TOMO_ID = "_tomoId"
 COORD_X = "_x"
 COORD_Y = "_y"
 COORD_Z = "_z"
+TOMO_ID = "_tomoId"
+EULER_MATRIX = "_eulerMatrix._matrix"
 
-COORD_3D_FIELDS = [COORD_X, COORD_Y, COORD_Z]
+COORD_3D_FIELDS = [COORD_X, COORD_Y, COORD_Z, TOMO_ID, EULER_MATRIX]

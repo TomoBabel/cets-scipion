@@ -6,7 +6,7 @@ from typing import List
 
 import yaml
 
-from cets_data_model.models.models import TiltSeries, Tomogram, CoordinateSet3D
+from cets_data_model.models.models import TiltSeries, Tomogram, Particle3DSet
 
 
 def validate_file(filename: PathLike, expected_ext: str) -> Path:
@@ -50,14 +50,14 @@ def write_tomo_set_yaml(tomo_list: List[Tomogram], output_directory: Path) -> No
 
 
 def write_coords_set_yaml(
-    coordinates: CoordinateSet3D, tomo_id: str, output_directory: Path
+    coordinates: Particle3DSet, tomo_id: str, output_directory: Path
 ) -> None:
     output_file = output_directory / f"coordinates_{tomo_id}_scipion_to_cets.yaml"
     write_obj_yaml(coordinates, output_file)
 
 
 def write_obj_yaml(
-    cets_ts_md: TiltSeries | Tomogram | CoordinateSet3D, yaml_file: Path | str | None
+    cets_ts_md: TiltSeries | Tomogram | Particle3DSet, yaml_file: Path | str | None
 ) -> None:
     if yaml_file is None:
         print("write_yaml -> yaml_file is None. Skipping...")

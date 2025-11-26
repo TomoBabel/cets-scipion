@@ -21,22 +21,22 @@ from scipion.utils.utils_sqlite import connect_db, map_classes_table, get_row_va
 class ScipionSetOfTomograms(BaseConverter):
     def scipion_to_cets(
         self,
-        coordinates_sqlite_path: Optional[os.PathLike] = None,
+        coordinates_db_path: Optional[os.PathLike] = None,
         out_directory: Optional[str] = None,
     ) -> List[Tomogram] | None:
         """Converts a set of tomograms from Scipion into CETS metadata.
 
-        :param coordinates_sqlite_path: path of the sqlite file containing the
+        :param coordinates_db_path: path of the sqlite file containing the
         coordinates picked.
-        :type coordinates_sqlite_path: pathlib.Path or str, optional, Defaults to None.
+        :type coordinates_db_path: pathlib.Path or str, optional, Defaults to None.
 
         :param out_directory: name of the directory in which the tilt-series
         .yaml files (one per tilt-series) will be written.
         :type out_directory: pathlib.Path or str, optional, Defaults to None.
         """
         coordinates_reader = (
-            ScipionSetOfCoordinates3D(coordinates_sqlite_path)
-            if coordinates_sqlite_path
+            ScipionSetOfCoordinates3D(coordinates_db_path)
+            if coordinates_db_path
             else None
         )
         db_connection = connect_db(self.db_path)
@@ -77,7 +77,6 @@ class ScipionSetOfTomograms(BaseConverter):
                         if coordinates_reader
                         else None
                     )
-
                     tomo = Tomogram(
                         tomo_id=tomo_id,
                         path=str(tomo_fn),
@@ -91,7 +90,7 @@ class ScipionSetOfTomograms(BaseConverter):
                         ctf_corrected=get_row_value(
                             row, tomo_set_class_dict, CTF_CORRECTED
                         ),
-                        coordinates=coordinates3d_set,
+                        particle_set=coordinates3d_set,
                     )
                     tomo_list.append(tomo)
                 if out_directory:

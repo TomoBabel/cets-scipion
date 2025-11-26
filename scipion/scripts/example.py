@@ -25,4 +25,6 @@ sci_ts_set.scipion_to_cets(ctf_md=ctf_md_dict, out_directory=scratch_dir)
 
 # Tomogram metadata
 sci_tomo_set = ScipionSetOfTomograms(tomo_db_path)
-tomo_md_list = sci_tomo_set.scipion_to_cets(out_directory=scratch_dir)
+tomo_md_list = sci_tomo_set.scipion_to_cets(
+    coordinates_db_path=coords_db_path, out_directory=scratch_dir
+)
