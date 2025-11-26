@@ -60,3 +60,21 @@ TOMO_ID = "_tomoId"
 EULER_MATRIX = "_eulerMatrix._matrix"
 
 COORD_3D_FIELDS = [COORD_X, COORD_Y, COORD_Z, TOMO_ID, EULER_MATRIX]
+
+# SUBTOMOGRAMS ########################################
+SUBTOMO_X = "_coordinate._x"
+SUBTOMO_Y = "_coordinate._y"
+SUBTOMO_Z = "_coordinate._z"
+SUBTOMO_COORD_MATRIX = "_coordinate._eulerMatrix._matrix"
+SUBTOMO_TRANSFORM_MATRIX = "_transform._matrix"
+SUBTOMO_ID = "_coordinate._tomoId"
+
+SUBTOMO_FIELDS = [
+    FILE_NAME,
+    SUBTOMO_X,
+    SUBTOMO_Y,
+    SUBTOMO_Z,
+    SUBTOMO_COORD_MATRIX,
+    SUBTOMO_TRANSFORM_MATRIX,
+    SUBTOMO_ID,
+]

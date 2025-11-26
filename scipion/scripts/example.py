@@ -14,6 +14,7 @@ tomo_db_path = f_path / "Runs/000821_ProtImportTomograms/tomograms.sqlite"
 coords_db_path = (
     f_path / "Runs/000872_ProtImportCoordinates3DFromStar/coordinates3d.sqlite"
 )
+subtomo_db_paht = f_path / "Runs/001008_DynamoSubTomoMRA/subtomograms.sqlite"
 
 # CTF metadata
 sci_ctf_set = ScipionSetOfCtf(ctf_db_path)
@@ -23,8 +24,14 @@ ctf_md_dict = sci_ctf_set.scipion_to_cets()
 sci_ts_set = ScipionSetOfTiltSeries(ts_db_path)
 sci_ts_set.scipion_to_cets(ctf_md=ctf_md_dict, out_directory=scratch_dir)
 
-# Tomogram metadata
+# Tomogram metadata with coordinates
 sci_tomo_set = ScipionSetOfTomograms(tomo_db_path)
 tomo_md_list = sci_tomo_set.scipion_to_cets(
-    coordinates_db_path=coords_db_path, out_directory=scratch_dir
+    particles_db_path=coords_db_path, out_directory=scratch_dir
+)
+
+# Tomogram metadata with subtomograms
+sci_tomo_set = ScipionSetOfTomograms(tomo_db_path)
+tomo_md_list = sci_tomo_set.scipion_to_cets(
+    particles_db_path=subtomo_db_paht, out_directory=scratch_dir
 )

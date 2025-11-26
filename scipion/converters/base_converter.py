@@ -1,7 +1,8 @@
 import os
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Any
 
+from cets_data_model.models.models import Affine
 from scipion.utils.utils import validate_file
 
 
@@ -9,6 +10,9 @@ class BaseConverter:
     def __init__(self, sqlite_path: os.PathLike):
         self.db_path = validate_file(sqlite_path, ".sqlite")
         self.scipion_prj_path = self._get_prj_path()
+
+    def scipion_to_cets(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
 
     def _get_prj_path(self) -> Path:
         orig_dir = os.getcwd()
@@ -34,3 +38,13 @@ class BaseConverter:
             if mapped_class_dict.get(field, None)
         ]
         return ", ".join(present_fields)
+
+    @staticmethod
+    def _gen_subvolume_transform(
+        euler_matrix: List[List[float]], is_coordinate: bool = True
+    ) -> Affine:
+        angular_matrix = [
+            sublist[:3] for sublist in euler_matrix[:3]
+        ]  # Take only the angular 3x3 sub-matrix
+        name = "Coordinate 3D" if is_coordinate else "Subtomogram"
+        return Affine(name=f"{name} orientation", affine=angular_matrix)

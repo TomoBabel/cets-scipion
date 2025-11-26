@@ -1,4 +1,5 @@
 import os
+from os.path import basename
 from pathlib import Path
 from typing import List, Optional
 
@@ -14,6 +15,7 @@ from scipion.constants import (
 )
 from scipion.converters.base_converter import BaseConverter
 from scipion.converters.coodinates3d import ScipionSetOfCoordinates3D
+from scipion.converters.subtomograms import ScipionSetOfSubtomogras
 from scipion.utils.utils import write_tomo_set_yaml
 from scipion.utils.utils_sqlite import connect_db, map_classes_table, get_row_value
 
@@ -21,24 +23,28 @@ from scipion.utils.utils_sqlite import connect_db, map_classes_table, get_row_va
 class ScipionSetOfTomograms(BaseConverter):
     def scipion_to_cets(
         self,
-        coordinates_db_path: Optional[os.PathLike] = None,
+        particles_db_path: Optional[os.PathLike] = None,
         out_directory: Optional[str] = None,
     ) -> List[Tomogram] | None:
         """Converts a set of tomograms from Scipion into CETS metadata.
 
-        :param coordinates_db_path: path of the sqlite file containing the
-        coordinates picked.
-        :type coordinates_db_path: pathlib.Path or str, optional, Defaults to None.
+        :param particles_db_path: path of the sqlite file containing the
+        coordinates picked or the subtomograms.
+        :type particles_db_path: pathlib.Path or str, optional, Defaults to None.
 
         :param out_directory: name of the directory in which the tilt-series
         .yaml files (one per tilt-series) will be written.
         :type out_directory: pathlib.Path or str, optional, Defaults to None.
         """
-        coordinates_reader = (
-            ScipionSetOfCoordinates3D(coordinates_db_path)
-            if coordinates_db_path
-            else None
-        )
+        are_coordinates = True if "coord" in basename(str(particles_db_path)) else False
+        particles_reader = None
+        coordinates3d_set = None
+        if particles_db_path:
+            particles_reader = (
+                ScipionSetOfCoordinates3D(particles_db_path)
+                if are_coordinates
+                else ScipionSetOfSubtomogras(particles_db_path)
+            )
         db_connection = connect_db(self.db_path)
         if db_connection is not None:
             with db_connection as conn:
@@ -72,11 +78,8 @@ class ScipionSetOfTomograms(BaseConverter):
                     if odd_even_fn:
                         even_fn, odd_fn = sorted(odd_even_fn.split(","))
                     # Manage the coordinates
-                    coordinates3d_set = (
-                        coordinates_reader.scipion_to_cets(tomo_id)
-                        if coordinates_reader
-                        else None
-                    )
+                    if particles_reader:
+                        coordinates3d_set = particles_reader.scipion_to_cets(tomo_id)
                     tomo = Tomogram(
                         tomo_id=tomo_id,
                         path=str(tomo_fn),
