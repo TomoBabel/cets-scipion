@@ -40,12 +40,13 @@ class ScipionSetOfSubtomogras(BaseConverter):
         tomo_id: str,
         # out_directory: str | None = None
     ) -> Particle3DSet | None:
-        """Converts the set of subtomograms corresponding to the introduced tomogram identifier
-        into CETS metadata.
+        """Converts a set of subtomograms in Scipion sqlite format corresponding to the
+        introduced tomogram identifier into CETS metadata.
 
         :param tomo_id: tomogram identifier. It is used to indicate the tomogram from which the
         subtomograms will be converted, as in Scipion the subtomograms from all the tomograms are
         stored together.
+        :type tomo_id: str.
         """
         db_connection = connect_db(self.db_path)
         if db_connection is not None:

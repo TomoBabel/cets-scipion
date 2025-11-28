@@ -24,17 +24,17 @@ class ScipionSetOfTomograms(BaseConverter):
     def scipion_to_cets(
         self,
         particles_db_path: Optional[os.PathLike] = None,
-        out_directory: Optional[str] = None,
+        out_directory: Optional[os.PathLike] = None,
     ) -> List[Tomogram] | None:
         """Converts a set of tomograms from Scipion into CETS metadata.
 
         :param particles_db_path: path of the sqlite file containing the
         coordinates picked or the subtomograms.
-        :type particles_db_path: pathlib.Path or str, optional, Defaults to None.
+        :type particles_db_path: os.PathLike, optional. Defaults to None.
 
         :param out_directory: name of the directory in which the tilt-series
         .yaml files (one per tilt-series) will be written.
-        :type out_directory: pathlib.Path or str, optional, Defaults to None.
+        :type out_directory: os.PathLike, optional. Defaults to None.
         """
         are_coordinates = True if "coord" in basename(str(particles_db_path)) else False
         particles_reader = None

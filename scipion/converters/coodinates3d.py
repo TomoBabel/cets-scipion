@@ -43,6 +43,7 @@ class ScipionSetOfCoordinates3D(BaseConverter):
         :param tomo_id: tomogram identifier. It is used to indicate the tomogram from which the
         coordinates will be converted, as in Scipion the coordinates from all the tomograms are
         stored together.
+        :type tomo_id: str.
         """
         db_connection = connect_db(self.db_path)
         if db_connection is not None:
