@@ -43,7 +43,7 @@ class ScipionSetOfSubtomogras(BaseConverter):
         """Converts a set of subtomograms in Scipion sqlite format corresponding to the
         introduced tomogram identifier into CETS metadata.
 
-        :param tomo_id: tomogram identifier. It is used to indicate the tomogram from which the
+        :param tomo_id: Scipion tomogram identifier. It is used to indicate the tomogram from which the
         subtomograms will be converted, as in Scipion the subtomograms from all the tomograms are
         stored together.
         :type tomo_id: str.
@@ -63,7 +63,7 @@ class ScipionSetOfSubtomogras(BaseConverter):
                 tomo_id_col_name = coord_set_class_dict[SUBTOMO_ID]
                 query = f'SELECT {coord_sql_fields} FROM "{OBJECTS_TBL}" WHERE {tomo_id_col_name}="{tomo_id}"'
                 cursor.execute(query)  # execute the query
-                coord_list = []
+                particle_list = []
                 for row in cursor:
                     subtomo_fn = get_row_value(row, coord_set_class_dict, FILE_NAME)
                     subtomo_fn = (
@@ -91,8 +91,7 @@ class ScipionSetOfSubtomogras(BaseConverter):
                         get_row_value(row, coord_set_class_dict, SUBTOMO_Y),
                         get_row_value(row, coord_set_class_dict, SUBTOMO_Z),
                     ]
-                    print(position)
-                    coordinate3d = Particle3D(
+                    particle3d = Particle3D(
                         path=str(subtomo_fn),
                         width=img_info.size_x,
                         height=img_info.size_y,
@@ -103,9 +102,9 @@ class ScipionSetOfSubtomogras(BaseConverter):
                             subtomo_transform,
                         ],
                     )
-                    coord_list.append(coordinate3d)
+                    particle_list.append(particle3d)
                 coordinates = Particle3DSet(
-                    particles=coord_list,
+                    particles=particle_list,
                     coordinate_systems=coordinates_system,
                 )
                 # if out_directory:
