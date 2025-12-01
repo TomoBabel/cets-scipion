@@ -65,7 +65,9 @@ class ScipionSetOfCoordinates3D(BaseConverter):
                     euler_matrix = ast.literal_eval(
                         get_row_value(row, coord_set_class_dict, EULER_MATRIX)
                     )
-                    coordinate_transform = self._gen_subvolume_transform(euler_matrix)
+                    _, coordinate_transform = self._gen_subvolume_transforms(
+                        euler_matrix
+                    )
 
                     coordinate3d = Particle3D(
                         position=[

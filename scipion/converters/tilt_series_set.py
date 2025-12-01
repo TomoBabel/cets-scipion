@@ -83,7 +83,7 @@ class ScipionSetOfTiltSeries(BaseConverter):
 
                 # Coordinate system
                 axis_xy = Axis(
-                    name=SpaceAxis.XY,
+                    name=SpaceAxis.Z,
                     axis_unit=AxisUnit.pixel,
                     axis_type=AxisType.space,
                 )

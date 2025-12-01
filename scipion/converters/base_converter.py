@@ -1,8 +1,8 @@
 import os
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Tuple
 
-from cets_data_model.models.models import Affine
+from cets_data_model.models.models import Affine, Translation
 from scipion.utils.utils import validate_file
 
 
@@ -40,11 +40,25 @@ class BaseConverter:
         return ", ".join(present_fields)
 
     @staticmethod
-    def _gen_subvolume_transform(
+    def _gen_subvolume_transforms(
         euler_matrix: List[List[float]], is_coordinate: bool = True
-    ) -> Affine:
+    ) -> Tuple[Translation, Affine]:
+        if is_coordinate:
+            name = "Coordinate 3D"
+            translation_vector = [0.0, 0.0, 0.0]
+        else:
+            name = "Subtomogram"
+            translation_vector = [
+                euler_matrix[0][-1],
+                euler_matrix[1][-1],
+                euler_matrix[2][-1],
+            ]
         angular_matrix = [
             sublist[:3] for sublist in euler_matrix[:3]
         ]  # Take only the angular 3x3 sub-matrix
-        name = "Coordinate 3D" if is_coordinate else "Subtomogram"
-        return Affine(name=f"{name} orientation", affine=angular_matrix)
+        return (
+            Translation(
+                name="Particle Translation, in pixels", translation=translation_vector
+            ),
+            Affine(name=f"{name} orientation", affine=angular_matrix),
+        )

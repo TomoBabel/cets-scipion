@@ -76,33 +76,41 @@ class ScipionSetOfSubtomogras(BaseConverter):
                     euler_matrix = ast.literal_eval(
                         get_row_value(row, coord_set_class_dict, SUBTOMO_COORD_MATRIX)
                     )
-                    coordinate_transform = self._gen_subvolume_transform(euler_matrix)
+                    _, coordinate_transform = self._gen_subvolume_transforms(
+                        euler_matrix
+                    )
                     subtomo_euler_matrix = ast.literal_eval(
                         get_row_value(
                             row, coord_set_class_dict, SUBTOMO_TRANSFORM_MATRIX
                         )
                     )
-                    subtomo_transform = self._gen_subvolume_transform(
+                    subtomo_tr, subtomo_rot = self._gen_subvolume_transforms(
                         subtomo_euler_matrix, is_coordinate=False
                     )
-
                     position = [
                         get_row_value(row, coord_set_class_dict, SUBTOMO_X),
                         get_row_value(row, coord_set_class_dict, SUBTOMO_Y),
                         get_row_value(row, coord_set_class_dict, SUBTOMO_Z),
                     ]
-                    particle3d = Particle3D(
-                        path=str(subtomo_fn),
-                        width=img_info.size_x,
-                        height=img_info.size_y,
-                        depth=img_info.size_z,
-                        position=position,
-                        coordinate_transformations=[
-                            coordinate_transform,
-                            subtomo_transform,
-                        ],
+                    particle_list.append(
+                        Particle3D(
+                            path=str(subtomo_fn),
+                            width=img_info.size_x,
+                            height=img_info.size_y,
+                            depth=img_info.size_z,
+                            position=position,
+                            coordinate_transformations=[
+                                coordinate_transform,
+                                subtomo_tr,
+                                subtomo_rot,
+                            ],
+                        )
                     )
-                    particle_list.append(particle3d)
+                if not particle_list:
+                    raise Exception(
+                        f"No particle files were found matching the introduced Scipion's "
+                        f"tomogram identifier [{tomo_id}]."
+                    )
                 coordinates = Particle3DSet(
                     particles=particle_list,
                     coordinate_systems=coordinates_system,
@@ -111,3 +119,4 @@ class ScipionSetOfSubtomogras(BaseConverter):
                 #     write_coords_set_yaml(coordinates, Path(out_directory))
                 return coordinates
         return None
+        # return None
