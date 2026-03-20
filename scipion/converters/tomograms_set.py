@@ -81,8 +81,9 @@ class ScipionSetOfTomograms(BaseConverter):
                     if particles_reader:
                         coordinates3d_set = particles_reader.scipion_to_cets(tomo_id)
                     tomo = Tomogram(
-                        tomo_id=tomo_id,
+                        id="TO BE DEFINED",  # TODO: to be defined
                         path=str(tomo_fn),
+                        tilt_series_id=tomo_id,
                         even_path=even_fn,
                         odd_path=odd_fn,
                         width=img_info.size_x,

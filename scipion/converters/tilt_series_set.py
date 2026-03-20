@@ -1,15 +1,13 @@
 import ast
 import sqlite3
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple, Optional
 
 import numpy as np
 
 from cets_data_model.models.models import (
     TiltImage,
     Axis,
-    SpaceAxis,
-    AxisUnit,
     AxisType,
     CoordinateSystem,
     CoordinateTransformation,
@@ -28,7 +26,7 @@ from scipion.constants import (
     INDEX,
     TILT_ANGLE,
     ACCUMULATED_DOSE,
-    ACQUISITION_ORDER,
+    # ACQUISITION_ORDER,
     TRANSFORMATION_MATRIX,
     ODD_EVEN_FN,
     CTF_CORRECTED,
@@ -82,12 +80,12 @@ class ScipionSetOfTiltSeries(BaseConverter):
                 ti_sql_fields = self._get_sql_fields(ts_class_dict, TILT_SERIES_FIELDS)
 
                 # Coordinate system
-                axis_xy = Axis(
-                    name=SpaceAxis.Z,
-                    axis_unit=AxisUnit.pixel,
+                axis_z = Axis(
+                    name="Z",
+                    axis_unit="pixel",
                     axis_type=AxisType.space,
                 )
-                coordinate_systems = CoordinateSystem(name="SCIPION", axes=[axis_xy])
+                coordinate_systems = CoordinateSystem(name="SCIPION", axes=[axis_z])
 
                 cursor = conn.cursor()
                 tilt_series_list = []
@@ -101,7 +99,7 @@ class ScipionSetOfTiltSeries(BaseConverter):
                     query = f'SELECT {ti_sql_fields} FROM "{tilt_images_table_name}"'
                     cursor.execute(query)  # execute the query
                     for row in cursor.fetchall():
-                        ti = self._ti_from_sqlite_row(
+                        ti, odd_fn, even_fn = self._ti_from_sqlite_row(
                             row, ts_class_dict, coordinate_systems
                         )
                         self._add_ctf_md(ti, i, ctf_md_list)
@@ -109,9 +107,11 @@ class ScipionSetOfTiltSeries(BaseConverter):
 
                     # Tilt-series
                     ts = TiltSeries(
+                        id="TO BE DEFINED",  # TODO: define this
+                        movie_stack_series_id=ts_id,  # TODO: define this
                         path=ti_list[-1].path,
-                        ts_id=ts_id,
-                        # pixel_size=pixel_size,
+                        even_path=even_fn,
+                        odd_path=odd_fn,
                         ctf_corrected=bool(ctf_corrected_list[i]),
                         images=ti_list,
                     )
@@ -127,7 +127,7 @@ class ScipionSetOfTiltSeries(BaseConverter):
         row: sqlite3.Row,
         ts_class_dict: Dict[str, str],
         coord_system: CoordinateSystem,
-    ) -> TiltImage:
+    ) -> Tuple[TiltImage, Optional[str], Optional[str]]:
         # Read image info
         ts_file = get_row_value(row, ts_class_dict, FILE_NAME)
         ts_fn = self.scipion_prj_path / ts_file if ts_file else self.scipion_prj_path
@@ -140,14 +140,15 @@ class ScipionSetOfTiltSeries(BaseConverter):
         # Get the transformation matrix
         tr_matrix_str = get_row_value(row, ts_class_dict, TRANSFORMATION_MATRIX)
         tr_matrix = np.array(ast.literal_eval(tr_matrix_str))
+        ts_id = get_row_value(row, ts_class_dict, TS_ID)
 
         # Create the tilt-image
-        return TiltImage(
-            ts_id=get_row_value(row, ts_class_dict, TS_ID),
+        ti = TiltImage(
+            movie_stack_id=ts_id,  # TODO: define this
             path=str(ts_fn),
-            even_path=even_fn,
-            odd_path=odd_fn,
-            acquisition_order=get_row_value(row, ts_class_dict, ACQUISITION_ORDER),
+            # even_path=even_fn,
+            # odd_path=odd_fn,
+            # acquisition_order=get_row_value(row, ts_class_dict, ACQUISITION_ORDER),
             section=get_row_value(row, ts_class_dict, INDEX),
             nominal_tilt_angle=get_row_value(row, ts_class_dict, TILT_ANGLE),
             accumulated_dose=get_row_value(row, ts_class_dict, ACCUMULATED_DOSE),
@@ -159,6 +160,7 @@ class ScipionSetOfTiltSeries(BaseConverter):
                 self._gen_rotation_transform(tr_matrix),
             ],
         )
+        return ti, odd_fn, even_fn
 
     @staticmethod
     def _get_ts_classes_tbl_name(ts_id: str) -> str:
