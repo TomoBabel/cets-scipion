@@ -1,5 +1,4 @@
 import os
-from os.path import basename
 from pathlib import Path
 from typing import List, Optional
 
@@ -14,8 +13,6 @@ from scipion.constants import (
     CTF_CORRECTED,
 )
 from scipion.converters.base_converter import BaseConverter
-from scipion.converters.coodinates3d import ScipionSetOfCoordinates3D
-from scipion.converters.subtomograms import ScipionSetOfSubtomogras
 from scipion.utils.utils import write_tomo_set_yaml
 from scipion.utils.utils_sqlite import connect_db, map_classes_table, get_row_value
 
@@ -23,28 +20,20 @@ from scipion.utils.utils_sqlite import connect_db, map_classes_table, get_row_va
 class ScipionSetOfTomograms(BaseConverter):
     def scipion_to_cets(
         self,
-        particles_db_path: Optional[os.PathLike] = None,
         out_directory: Optional[os.PathLike] = None,
     ) -> List[Tomogram] | None:
         """Converts a set of tomograms from Scipion into CETS metadata.
 
-        :param particles_db_path: path of the sqlite file containing the
-        coordinates picked or the subtomograms.
-        :type particles_db_path: os.PathLike, optional. Defaults to None.
+        Coordinates are now ``PointSet3D`` annotations (see ``ScipionSetOfCoordinates3D``) that
+        live under ``Region.annotations``, and extracted subvolumes are ``ParticleMap`` objects
+        under ``Average.particle_maps`` (see ``ScipionSetOfSubtomogras``). This converter is
+        therefore tomogram-only; run the coordinate / subtomogram converters separately and
+        assemble the ``Region`` / ``Dataset`` at a higher level.
 
-        :param out_directory: name of the directory in which the tilt-series
-        .yaml files (one per tilt-series) will be written.
+        :param out_directory: name of the directory in which the tomogram
+        .yaml files (one per tomogram) will be written.
         :type out_directory: os.PathLike, optional. Defaults to None.
         """
-        are_coordinates = True if "coord" in basename(str(particles_db_path)) else False
-        particles_reader = None
-        coordinates3d_set = None
-        if particles_db_path:
-            particles_reader = (
-                ScipionSetOfCoordinates3D(particles_db_path)
-                if are_coordinates
-                else ScipionSetOfSubtomogras(particles_db_path)
-            )
         db_connection = connect_db(self.db_path)
         if db_connection is not None:
             with db_connection as conn:
@@ -77,11 +66,11 @@ class ScipionSetOfTomograms(BaseConverter):
                     )
                     if odd_even_fn:
                         even_fn, odd_fn = sorted(odd_even_fn.split(","))
-                    # Manage the coordinates
-                    if particles_reader:
-                        coordinates3d_set = particles_reader.scipion_to_cets(tomo_id)
                     tomo = Tomogram(
-                        id="TO BE DEFINED",  # TODO: to be defined
+                        # TODO (open question #3): id-generation policy. The Scipion tomogram
+                        # id (tsId) is reused as the Tomogram id; it must be unique within its
+                        # Region. source_tomogram_id on the coordinate PointSet3D must match it.
+                        id=tomo_id,
                         path=str(tomo_fn),
                         tilt_series_id=tomo_id,
                         even_path=even_fn,
@@ -94,7 +83,6 @@ class ScipionSetOfTomograms(BaseConverter):
                         ctf_corrected=get_row_value(
                             row, tomo_set_class_dict, CTF_CORRECTED
                         ),
-                        particle_set=coordinates3d_set,
                     )
                     tomo_list.append(tomo)
                 if out_directory:

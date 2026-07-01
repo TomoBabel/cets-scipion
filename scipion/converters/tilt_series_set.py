@@ -1,4 +1,5 @@
 import ast
+import os
 import sqlite3
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
@@ -44,6 +45,11 @@ from scipion.utils.utils_sqlite import (
 
 
 class ScipionSetOfTiltSeries(BaseConverter):
+    def __init__(self, sqlite_path: os.PathLike):
+        super().__init__(sqlite_path)
+        self.img_x = -1
+        self.img_y = -1
+
     def scipion_to_cets(
         self,
         ctf_md: Dict[str, List[CTFMetadata]] | None = None,
@@ -107,7 +113,7 @@ class ScipionSetOfTiltSeries(BaseConverter):
 
                     # Tilt-series
                     ts = TiltSeries(
-                        id="TO BE DEFINED",  # TODO: define this
+                        id=ts_id,  # TODO: define this
                         movie_stack_series_id=ts_id,  # TODO: define this
                         path=ti_list[-1].path,
                         even_path=even_fn,
@@ -131,7 +137,10 @@ class ScipionSetOfTiltSeries(BaseConverter):
         # Read image info
         ts_file = get_row_value(row, ts_class_dict, FILE_NAME)
         ts_fn = self.scipion_prj_path / ts_file if ts_file else self.scipion_prj_path
-        img_info = get_mrc_info(ts_fn)
+        if self.img_x < 0:
+            img_info = get_mrc_info(ts_fn)
+            self.img_x = img_info.size_x
+            self.img_y = img_info.size_y
         # Get the odd / even filenames
         even_fn, odd_fn = None, None
         odd_even_fn = get_row_value(row, ts_class_dict, ODD_EVEN_FN)
@@ -152,8 +161,8 @@ class ScipionSetOfTiltSeries(BaseConverter):
             section=get_row_value(row, ts_class_dict, INDEX),
             nominal_tilt_angle=get_row_value(row, ts_class_dict, TILT_ANGLE),
             accumulated_dose=get_row_value(row, ts_class_dict, ACCUMULATED_DOSE),
-            width=img_info.size_x,
-            height=img_info.size_y,
+            width=self.img_x,
+            height=self.img_y,
             coordinate_systems=[coord_system],
             coordinate_transformations=[
                 self._gen_translation_transform(tr_matrix),
