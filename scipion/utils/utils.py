@@ -6,7 +6,13 @@ from typing import List
 
 import yaml
 
-from cets_data_model.models.models import TiltSeries, Tomogram, PointSet3D, Average
+from cets_data_model.models.models import (
+    TiltSeries,
+    Tomogram,
+    PointSet3D,
+    Average,
+    Alignment,
+)
 
 
 def validate_file(filename: PathLike, expected_ext: str) -> Path:
@@ -41,6 +47,19 @@ def write_ts_set_yaml(ts_list: List[TiltSeries], output_directory: Path) -> None
     for ts in ts_list:
         output_file = output_directory / f"tilt_series_{ts.id}_scipion_to_cets.yaml"
         write_obj_yaml(ts, output_file)
+
+
+def write_alignment_set_yaml(
+    ts_list: List[TiltSeries], alignment_list: List[Alignment], output_directory: Path
+) -> None:
+    """Writes one alignment yaml per tilt-series (index-aligned with ts_list).
+
+    In the data model the per-projection alignment lives in an ``Alignment`` (list of
+    ``ProjectionAlignment``) separate from the tilt-series, so it is serialized to its own file.
+    """
+    for ts, alignment in zip(ts_list, alignment_list):
+        output_file = output_directory / f"alignment_{ts.id}_scipion_to_cets.yaml"
+        write_obj_yaml(alignment, output_file)
 
 
 def write_tomo_set_yaml(tomo_list: List[Tomogram], output_directory: Path) -> None:
@@ -78,7 +97,7 @@ def write_subtomograms_yaml(
 
 
 def write_obj_yaml(
-    cets_ts_md: TiltSeries | Tomogram | PointSet3D | Average,
+    cets_ts_md: TiltSeries | Tomogram | PointSet3D | Average | Alignment,
     yaml_file: Path | str | None,
 ) -> None:
     if yaml_file is None:
