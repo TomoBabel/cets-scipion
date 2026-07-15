@@ -112,6 +112,14 @@ class ScipionSetOfSubtomogras(BaseConverter):
                     subtomo_tr, subtomo_rot = self._gen_subvolume_transforms(
                         subtomo_euler_matrix, is_coordinate=False
                     )
+                    # Anchor the pose transforms to the declared coordinate system (so
+                    # input/output resolve to a real CoordinateSystem on the ParticleMap
+                    # instead of being null). The pose is an endomorphism within that frame.
+                    cs_name = coordinates_system[0].name
+                    subtomo_tr.input = cs_name
+                    subtomo_tr.output = cs_name
+                    subtomo_rot.input = cs_name
+                    subtomo_rot.output = cs_name
                     # TODO (open question #1): the coordinate Euler orientation
                     # (SUBTOMO_COORD_MATRIX) has no home on PointSet3D. It is dropped here;
                     # revisit if per-point orientation of the picked coordinate must be kept.
@@ -130,6 +138,12 @@ class ScipionSetOfSubtomogras(BaseConverter):
                             depth=img_info.size_z,
                             source_annotation_reference_id=reference_id,
                             coord_index=coord_index,
+                            # Declare the frame the pose lives in. The axis name ("ZYZ")
+                            # surfaces the Euler convention of the affine/translation stored
+                            # in coordinate_transformations (the only convention mechanism the
+                            # current schema offers; a dedicated ParticleAlignment type + a
+                            # rotation_convention field are schema-level, not converter-level).
+                            coordinate_systems=coordinates_system,
                             coordinate_transformations=[subtomo_tr, subtomo_rot],
                         )
                     )
