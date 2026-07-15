@@ -141,9 +141,13 @@ class ScipionSetOfTiltSeries(BaseConverter):
                         images=ti_list,
                     )
                     tilt_series_list.append(ts)
-                    # Alignment for this tilt-series (meant to be placed under Region.alignments).
+                    # Alignment for this tilt-series (meant to be placed under Region.alignments),
+                    # linked back to the tilt-series via tilt_series_id.
                     alignments_list.append(
-                        Alignment(projection_alignments=projection_alignments)
+                        Alignment(
+                            tilt_series_id=ts_id,
+                            projection_alignments=projection_alignments,
+                        )
                     )
 
                 if out_directory:
@@ -176,15 +180,19 @@ class ScipionSetOfTiltSeries(BaseConverter):
         tr_matrix_str = get_row_value(row, ts_class_dict, TRANSFORMATION_MATRIX)
         tr_matrix = np.array(ast.literal_eval(tr_matrix_str))
         ts_id = get_row_value(row, ts_class_dict, TS_ID)
+        section = get_row_value(row, ts_class_dict, INDEX)
+        # Unique tilt-image id within the tilt-series (derived from the ts id + section).
+        tilt_image_id = f"{ts_id}_{section}"
 
         # Create the tilt-image
         ti = TiltImage(
+            id=tilt_image_id,
             movie_stack_id=ts_id,  # TODO: define this
             path=str(ts_fn),
             # even_path=even_fn,
             # odd_path=odd_fn,
             # acquisition_order=get_row_value(row, ts_class_dict, ACQUISITION_ORDER),
-            section=get_row_value(row, ts_class_dict, INDEX),
+            section=section,
             nominal_tilt_angle=get_row_value(row, ts_class_dict, TILT_ANGLE),
             accumulated_dose=get_row_value(row, ts_class_dict, ACCUMULATED_DOSE),
             width=self.img_x,
@@ -192,7 +200,12 @@ class ScipionSetOfTiltSeries(BaseConverter):
             coordinate_systems=[coord_system],
             # Alignment is no longer stored here; it lives in the ProjectionAlignment below.
         )
-        projection_alignment = self._gen_projection_alignment(tr_matrix)
+        # ProjectionAlignment linked to its tilt-image by tilt_image_id.
+        projection_alignment = self._gen_projection_alignment(
+            tr_matrix,
+            projection_alignment_id=f"{ts_id}_align_{section}",
+            tilt_image_id=tilt_image_id,
+        )
         return ti, projection_alignment, odd_fn, even_fn
 
     @staticmethod
@@ -204,11 +217,20 @@ class ScipionSetOfTiltSeries(BaseConverter):
         return f"{ts_id}_{OBJECTS_TBL}"
 
     def _gen_projection_alignment(
-        self, transformation_matrix: np.ndarray
+        self,
+        transformation_matrix: np.ndarray,
+        projection_alignment_id: str = "",
+        tilt_image_id: str | None = None,
     ) -> ProjectionAlignment:
         """Wraps the per-projection translation and affine rotation into a
-        ProjectionAlignment (order preserved: translation first, affine second)."""
+        ProjectionAlignment (order preserved: translation first, affine second).
+
+        :param projection_alignment_id: unique id for this ProjectionAlignment.
+        :param tilt_image_id: id of the TiltImage this alignment applies to.
+        """
         return ProjectionAlignment(
+            id=projection_alignment_id,
+            tilt_image_id=tilt_image_id,
             sequence=[
                 self._gen_translation_transform(transformation_matrix),
                 self._gen_rotation_transform(transformation_matrix),
