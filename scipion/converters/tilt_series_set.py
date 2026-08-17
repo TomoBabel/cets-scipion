@@ -29,6 +29,9 @@ from scipion.constants import (
     INDEX,
     TILT_ANGLE,
     ACCUMULATED_DOSE,
+    VOLTAGE,
+    SPHERICAL_ABERRATION,
+    AMPLITUDE_CONTRAST,
     # ACQUISITION_ORDER,
     TRANSFORMATION_MATRIX,
     ODD_EVEN_FN,
@@ -195,6 +198,16 @@ class ScipionSetOfTiltSeries(BaseConverter):
             section=section,
             nominal_tilt_angle=get_row_value(row, ts_class_dict, TILT_ANGLE),
             accumulated_dose=get_row_value(row, ts_class_dict, ACCUMULATED_DOSE),
+            # Microscope/session acquisition constants (same across the tilt-series);
+            # read per row from the tilt-image's Scipion acquisition object. get_row_value
+            # returns None when the column is absent, so older sqlite files still work.
+            voltage=get_row_value(row, ts_class_dict, VOLTAGE),
+            spherical_aberration=get_row_value(
+                row, ts_class_dict, SPHERICAL_ABERRATION
+            ),
+            amplitude_contrast=get_row_value(row, ts_class_dict, AMPLITUDE_CONTRAST),
+            # dose_rate is intentionally left unset: Scipion stores dose-per-frame
+            # (e-/A^2), not a per-second rate (e-/A^2/s) as CETS dose_rate expects.
             width=self.img_x,
             height=self.img_y,
             coordinate_systems=[coord_system],
