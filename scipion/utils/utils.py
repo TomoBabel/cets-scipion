@@ -6,7 +6,13 @@ from typing import List
 
 import yaml
 
-from cets_data_model.models.models import TiltSeries, Tomogram, Particle3DSet
+from cets_data_model.models.models import (
+    TiltSeries,
+    Tomogram,
+    PointSet3D,
+    Average,
+    Alignment,
+)
 
 
 def validate_file(filename: PathLike, expected_ext: str) -> Path:
@@ -39,25 +45,60 @@ def validate_new_file(in_file: Path | str) -> Path:
 
 def write_ts_set_yaml(ts_list: List[TiltSeries], output_directory: Path) -> None:
     for ts in ts_list:
-        output_file = output_directory / f"tilt_series_{ts.ts_id}_scipion_to_cets.yaml"
+        output_file = output_directory / f"tilt_series_{ts.id}_scipion_to_cets.yaml"
         write_obj_yaml(ts, output_file)
+
+
+def write_alignment_set_yaml(
+    ts_list: List[TiltSeries], alignment_list: List[Alignment], output_directory: Path
+) -> None:
+    """Writes one alignment yaml per tilt-series (index-aligned with ts_list).
+
+    In the data model the per-projection alignment lives in an ``Alignment`` (list of
+    ``ProjectionAlignment``) separate from the tilt-series, so it is serialized to its own file.
+    """
+    for ts, alignment in zip(ts_list, alignment_list):
+        output_file = output_directory / f"alignment_{ts.id}_scipion_to_cets.yaml"
+        write_obj_yaml(alignment, output_file)
 
 
 def write_tomo_set_yaml(tomo_list: List[Tomogram], output_directory: Path) -> None:
     for tomo in tomo_list:
-        output_file = output_directory / f"tomogram_{tomo.tomo_id}_scipion_to_cets.yaml"
+        output_file = (
+            output_directory / f"tomogram_{tomo.tilt_series_id}_scipion_to_cets.yaml"
+        )
         write_obj_yaml(tomo, output_file)
 
 
 def write_coords_set_yaml(
-    coordinates: Particle3DSet, tomo_id: str, output_directory: Path
+    coordinates: PointSet3D, tomo_id: str, output_directory: Path
 ) -> None:
     output_file = output_directory / f"coordinates_{tomo_id}_scipion_to_cets.yaml"
     write_obj_yaml(coordinates, output_file)
 
 
+def write_subtomograms_yaml(
+    point_set: PointSet3D, average: Average, tomo_id: str, output_directory: Path
+) -> None:
+    """Writes the (PointSet3D, Average) pair produced by the subtomogram converter.
+
+    The coordinates annotation and the average are written to separate yaml files, mirroring
+    the fact that in the data model they live in different containers (Region.annotations and
+    Dataset.averages, respectively).
+    """
+    write_obj_yaml(
+        point_set,
+        output_directory / f"coordinates_{tomo_id}_scipion_to_cets.yaml",
+    )
+    write_obj_yaml(
+        average,
+        output_directory / f"average_{tomo_id}_scipion_to_cets.yaml",
+    )
+
+
 def write_obj_yaml(
-    cets_ts_md: TiltSeries | Tomogram | Particle3DSet, yaml_file: Path | str | None
+    cets_ts_md: TiltSeries | Tomogram | PointSet3D | Average | Alignment,
+    yaml_file: Path | str | None,
 ) -> None:
     if yaml_file is None:
         print("write_yaml -> yaml_file is None. Skipping...")

@@ -1,15 +1,14 @@
 import ast
+import os
 import sqlite3
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple, Optional
 
 import numpy as np
 
 from cets_data_model.models.models import (
     TiltImage,
     Axis,
-    SpaceAxis,
-    AxisUnit,
     AxisType,
     CoordinateSystem,
     CoordinateTransformation,
@@ -19,6 +18,8 @@ from cets_data_model.models.models import (
     Matrix3x3,
     TiltSeries,
     CTFMetadata,
+    ProjectionAlignment,
+    Alignment,
 )
 from cets_data_model.utils.image_utils import get_mrc_info
 from scipion.constants import (
@@ -28,7 +29,7 @@ from scipion.constants import (
     INDEX,
     TILT_ANGLE,
     ACCUMULATED_DOSE,
-    ACQUISITION_ORDER,
+    # ACQUISITION_ORDER,
     TRANSFORMATION_MATRIX,
     ODD_EVEN_FN,
     CTF_CORRECTED,
@@ -36,7 +37,7 @@ from scipion.constants import (
     OBJECTS_TBL,
 )
 from scipion.converters.base_converter import BaseConverter
-from scipion.utils.utils import write_ts_set_yaml
+from scipion.utils.utils import write_ts_set_yaml, write_alignment_set_yaml
 from scipion.utils.utils_sqlite import (
     connect_db,
     map_classes_table,
@@ -46,12 +47,28 @@ from scipion.utils.utils_sqlite import (
 
 
 class ScipionSetOfTiltSeries(BaseConverter):
+    def __init__(self, sqlite_path: os.PathLike):
+        super().__init__(sqlite_path)
+        self.img_x = -1
+        self.img_y = -1
+
     def scipion_to_cets(
         self,
         ctf_md: Dict[str, List[CTFMetadata]] | None = None,
         out_directory: str | None = None,
-    ) -> List[TiltSeries] | None:
+    ) -> Tuple[List[TiltSeries], List[Alignment]] | None:
         """Converts a set of tilt-series from Scipion into CETS metadata.
+
+        In the current data model the per-projection alignment is NOT stored inside each
+        tilt-image's ``coordinate_transformations``. Instead it is represented with the
+        dedicated ``ProjectionAlignment`` structure (one per tilt-image, holding the
+        ``[Translation, Affine]`` pair in its ``sequence``), and all of them are aggregated
+        into a single ``Alignment`` per tilt-series. ``Alignment`` objects live under
+        ``Region.alignments``; since this converter emits bare ``TiltSeries`` (not a
+        ``Region``), the alignments are returned alongside them for higher-level assembly.
+        The returned lists are index-aligned: ``alignments[i]`` is the alignment of
+        ``tilt_series[i]``, and its i-th ``ProjectionAlignment`` corresponds to that
+        tilt-series' i-th ``images`` entry (positional binding).
 
         :param ctf_md: dictionary of type key: tilt-series id, value: list of CTF Metadata
         containing the CTFMetadata of corresponding to all the tilt-images that compose the tilt-series
@@ -82,44 +99,63 @@ class ScipionSetOfTiltSeries(BaseConverter):
                 ti_sql_fields = self._get_sql_fields(ts_class_dict, TILT_SERIES_FIELDS)
 
                 # Coordinate system
-                axis_xy = Axis(
-                    name=SpaceAxis.Z,
-                    axis_unit=AxisUnit.pixel,
+                axis_z = Axis(
+                    name="Z",
+                    axis_unit="pixel",
                     axis_type=AxisType.space,
                 )
-                coordinate_systems = CoordinateSystem(name="SCIPION", axes=[axis_xy])
+                coordinate_systems = CoordinateSystem(name="SCIPION", axes=[axis_z])
 
                 cursor = conn.cursor()
                 tilt_series_list = []
+                alignments_list = []
                 for i, ts_id in enumerate(ts_ids):
                     print(f"tsId = {ts_id}. Loading the tilt-series...")
                     # Manage the CTFMetadata
                     ctf_md_list = ctf_md.get(ts_id, None) if ctf_md else None
                     # Read the tilt-images table
                     ti_list = []
+                    projection_alignments = []
                     tilt_images_table_name = self._get_ts_obj_tbl_name(ts_id)
                     query = f'SELECT {ti_sql_fields} FROM "{tilt_images_table_name}"'
                     cursor.execute(query)  # execute the query
                     for row in cursor.fetchall():
-                        ti = self._ti_from_sqlite_row(
-                            row, ts_class_dict, coordinate_systems
+                        ti, projection_alignment, odd_fn, even_fn = (
+                            self._ti_from_sqlite_row(
+                                row, ts_class_dict, coordinate_systems
+                            )
                         )
                         self._add_ctf_md(ti, i, ctf_md_list)
                         ti_list.append(ti)
+                        # One ProjectionAlignment per projection (index-aligned with ti_list).
+                        projection_alignments.append(projection_alignment)
 
                     # Tilt-series
                     ts = TiltSeries(
+                        id=ts_id,  # TODO: define this
+                        movie_stack_series_id=ts_id,  # TODO: define this
                         path=ti_list[-1].path,
-                        ts_id=ts_id,
-                        # pixel_size=pixel_size,
+                        even_path=even_fn,
+                        odd_path=odd_fn,
                         ctf_corrected=bool(ctf_corrected_list[i]),
                         images=ti_list,
                     )
                     tilt_series_list.append(ts)
+                    # Alignment for this tilt-series (meant to be placed under Region.alignments),
+                    # linked back to the tilt-series via tilt_series_id.
+                    alignments_list.append(
+                        Alignment(
+                            tilt_series_id=ts_id,
+                            projection_alignments=projection_alignments,
+                        )
+                    )
 
                 if out_directory:
                     write_ts_set_yaml(tilt_series_list, Path(out_directory))
-                return tilt_series_list
+                    write_alignment_set_yaml(
+                        tilt_series_list, alignments_list, Path(out_directory)
+                    )
+                return tilt_series_list, alignments_list
         return None
 
     def _ti_from_sqlite_row(
@@ -127,11 +163,14 @@ class ScipionSetOfTiltSeries(BaseConverter):
         row: sqlite3.Row,
         ts_class_dict: Dict[str, str],
         coord_system: CoordinateSystem,
-    ) -> TiltImage:
+    ) -> Tuple[TiltImage, ProjectionAlignment, Optional[str], Optional[str]]:
         # Read image info
         ts_file = get_row_value(row, ts_class_dict, FILE_NAME)
         ts_fn = self.scipion_prj_path / ts_file if ts_file else self.scipion_prj_path
-        img_info = get_mrc_info(ts_fn)
+        if self.img_x < 0:
+            img_info = get_mrc_info(ts_fn)
+            self.img_x = img_info.size_x
+            self.img_y = img_info.size_y
         # Get the odd / even filenames
         even_fn, odd_fn = None, None
         odd_even_fn = get_row_value(row, ts_class_dict, ODD_EVEN_FN)
@@ -140,25 +179,34 @@ class ScipionSetOfTiltSeries(BaseConverter):
         # Get the transformation matrix
         tr_matrix_str = get_row_value(row, ts_class_dict, TRANSFORMATION_MATRIX)
         tr_matrix = np.array(ast.literal_eval(tr_matrix_str))
+        ts_id = get_row_value(row, ts_class_dict, TS_ID)
+        section = get_row_value(row, ts_class_dict, INDEX)
+        # Unique tilt-image id within the tilt-series (derived from the ts id + section).
+        tilt_image_id = f"{ts_id}_{section}"
 
         # Create the tilt-image
-        return TiltImage(
-            ts_id=get_row_value(row, ts_class_dict, TS_ID),
+        ti = TiltImage(
+            id=tilt_image_id,
+            movie_stack_id=ts_id,  # TODO: define this
             path=str(ts_fn),
-            even_path=even_fn,
-            odd_path=odd_fn,
-            acquisition_order=get_row_value(row, ts_class_dict, ACQUISITION_ORDER),
-            section=get_row_value(row, ts_class_dict, INDEX),
+            # even_path=even_fn,
+            # odd_path=odd_fn,
+            # acquisition_order=get_row_value(row, ts_class_dict, ACQUISITION_ORDER),
+            section=section,
             nominal_tilt_angle=get_row_value(row, ts_class_dict, TILT_ANGLE),
             accumulated_dose=get_row_value(row, ts_class_dict, ACCUMULATED_DOSE),
-            width=img_info.size_x,
-            height=img_info.size_y,
+            width=self.img_x,
+            height=self.img_y,
             coordinate_systems=[coord_system],
-            coordinate_transformations=[
-                self._gen_translation_transform(tr_matrix),
-                self._gen_rotation_transform(tr_matrix),
-            ],
+            # Alignment is no longer stored here; it lives in the ProjectionAlignment below.
         )
+        # ProjectionAlignment linked to its tilt-image by tilt_image_id.
+        projection_alignment = self._gen_projection_alignment(
+            tr_matrix,
+            projection_alignment_id=f"{ts_id}_align_{section}",
+            tilt_image_id=tilt_image_id,
+        )
+        return ti, projection_alignment, odd_fn, even_fn
 
     @staticmethod
     def _get_ts_classes_tbl_name(ts_id: str) -> str:
@@ -167,6 +215,30 @@ class ScipionSetOfTiltSeries(BaseConverter):
     @staticmethod
     def _get_ts_obj_tbl_name(ts_id: str) -> str:
         return f"{ts_id}_{OBJECTS_TBL}"
+
+    def _gen_projection_alignment(
+        self,
+        transformation_matrix: np.ndarray,
+        projection_alignment_id: str = "",
+        tilt_image_id: str | None = None,
+    ) -> ProjectionAlignment:
+        """Wraps the per-projection translation and affine rotation into a
+        ProjectionAlignment (order preserved: translation first, affine second).
+
+        :param projection_alignment_id: unique id for this ProjectionAlignment.
+        :param tilt_image_id: id of the TiltImage this alignment applies to.
+        """
+        return ProjectionAlignment(
+            id=projection_alignment_id,
+            tilt_image_id=tilt_image_id,
+            sequence=[
+                self._gen_translation_transform(transformation_matrix),
+                self._gen_rotation_transform(transformation_matrix),
+            ],
+            name="Scipion projection alignment.",
+            input="Tilt-image",
+            output="Aligned tilt-image",
+        )
 
     @staticmethod
     def _gen_translation_transform(transformation_matrix: np.ndarray) -> Translation:

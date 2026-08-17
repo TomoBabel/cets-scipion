@@ -10,8 +10,6 @@ from scipion.constants import (
     DEFOCUS_U,
     DEFOCUS_V,
     DEFOCUS_ANGLE,
-    ACQUISITION_ORDER,
-    PHASE_SHIFT,
 )
 from scipion.converters.base_converter import BaseConverter
 from scipion.utils.utils_sqlite import (
@@ -85,8 +83,8 @@ class ScipionSetOfCtf(BaseConverter):
             defocus_u=get_row_value(row, ctf_tomo_class_dict, DEFOCUS_U),
             defocus_v=get_row_value(row, ctf_tomo_class_dict, DEFOCUS_V),
             defocus_angle=get_row_value(row, ctf_tomo_class_dict, DEFOCUS_ANGLE),
-            phase_shift=get_row_value(row, ctf_tomo_class_dict, PHASE_SHIFT),
-            acquisition_order=get_row_value(
-                row, ctf_tomo_class_dict, ACQUISITION_ORDER
-            ),
+            # phase_shift=get_row_value(row, ctf_tomo_class_dict, PHASE_SHIFT),
+            # acquisition_order=get_row_value(
+            #     row, ctf_tomo_class_dict, ACQUISITION_ORDER
+            # ),
         )
