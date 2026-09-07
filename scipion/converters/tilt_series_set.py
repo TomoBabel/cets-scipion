@@ -20,6 +20,8 @@ from cets_data_model.models.models import (
     CTFMetadata,
     ProjectionAlignment,
     Alignment,
+    Instrument,
+    AcquisitionSession,
 )
 from cets_data_model.utils.image_utils import get_mrc_info
 from scipion.constants import (
@@ -40,7 +42,11 @@ from scipion.constants import (
     OBJECTS_TBL,
 )
 from scipion.converters.base_converter import BaseConverter
-from scipion.utils.utils import write_ts_set_yaml, write_alignment_set_yaml
+from scipion.utils.utils import (
+    write_ts_set_yaml,
+    write_alignment_set_yaml,
+    write_instruments_yaml,
+)
 from scipion.utils.utils_sqlite import (
     connect_db,
     map_classes_table,
@@ -59,7 +65,15 @@ class ScipionSetOfTiltSeries(BaseConverter):
         self,
         ctf_md: Dict[str, List[CTFMetadata]] | None = None,
         out_directory: str | None = None,
-    ) -> Tuple[List[TiltSeries], List[Alignment]] | None:
+    ) -> (
+        Tuple[
+            List[TiltSeries],
+            List[Alignment],
+            List[Instrument],
+            List[AcquisitionSession],
+        ]
+        | None
+    ):
         """Converts a set of tilt-series from Scipion into CETS metadata.
 
         In the current data model the per-projection alignment is NOT stored inside each
@@ -72,6 +86,13 @@ class ScipionSetOfTiltSeries(BaseConverter):
         The returned lists are index-aligned: ``alignments[i]`` is the alignment of
         ``tilt_series[i]``, and its i-th ``ProjectionAlignment`` corresponds to that
         tilt-series' i-th ``images`` entry (positional binding).
+
+        Microscope/session acquisition metadata is no longer stored on the tilt-images: it
+        is emitted as a single dataset-level ``Instrument`` (voltage, spherical aberration)
+        and a single ``AcquisitionSession`` (amplitude contrast, linked to the instrument via
+        ``instrument_id``). Every tilt-series references the session via
+        ``acquisition_session_id``. Both are returned as the 3rd and 4th elements for
+        higher-level assembly onto ``Dataset.instruments`` / ``Dataset.acquisition_sessions``.
 
         :param ctf_md: dictionary of type key: tilt-series id, value: list of CTF Metadata
         containing the CTFMetadata of corresponding to all the tilt-images that compose the tilt-series
@@ -112,6 +133,10 @@ class ScipionSetOfTiltSeries(BaseConverter):
                 cursor = conn.cursor()
                 tilt_series_list = []
                 alignments_list = []
+                # Dataset-level acquisition metadata (constant across the set); built once
+                # from the first tilt-image row and referenced by every tilt-series.
+                instrument: Optional[Instrument] = None
+                acquisition_session: Optional[AcquisitionSession] = None
                 for i, ts_id in enumerate(ts_ids):
                     print(f"tsId = {ts_id}. Loading the tilt-series...")
                     # Manage the CTFMetadata
@@ -123,6 +148,12 @@ class ScipionSetOfTiltSeries(BaseConverter):
                     query = f'SELECT {ti_sql_fields} FROM "{tilt_images_table_name}"'
                     cursor.execute(query)  # execute the query
                     for row in cursor.fetchall():
+                        # Build the Instrument / AcquisitionSession once (values are the
+                        # same for every image in the set).
+                        if instrument is None:
+                            instrument, acquisition_session = self._build_acquisition(
+                                row, ts_class_dict
+                            )
                         ti, projection_alignment, odd_fn, even_fn = (
                             self._ti_from_sqlite_row(
                                 row, ts_class_dict, coordinate_systems
@@ -142,6 +173,10 @@ class ScipionSetOfTiltSeries(BaseConverter):
                         odd_path=odd_fn,
                         ctf_corrected=bool(ctf_corrected_list[i]),
                         images=ti_list,
+                        # Link the tilt-series to its acquisition session.
+                        acquisition_session_id=(
+                            acquisition_session.id if acquisition_session else None
+                        ),
                     )
                     tilt_series_list.append(ts)
                     # Alignment for this tilt-series (meant to be placed under Region.alignments),
@@ -153,12 +188,25 @@ class ScipionSetOfTiltSeries(BaseConverter):
                         )
                     )
 
+                # Dataset-level collections (one element each for a single Scipion set).
+                instruments = [instrument] if instrument else []
+                acquisition_sessions = (
+                    [acquisition_session] if acquisition_session else []
+                )
                 if out_directory:
                     write_ts_set_yaml(tilt_series_list, Path(out_directory))
                     write_alignment_set_yaml(
                         tilt_series_list, alignments_list, Path(out_directory)
                     )
-                return tilt_series_list, alignments_list
+                    write_instruments_yaml(
+                        instruments, acquisition_sessions, Path(out_directory)
+                    )
+                return (
+                    tilt_series_list,
+                    alignments_list,
+                    instruments,
+                    acquisition_sessions,
+                )
         return None
 
     def _ti_from_sqlite_row(
@@ -198,16 +246,8 @@ class ScipionSetOfTiltSeries(BaseConverter):
             section=section,
             nominal_tilt_angle=get_row_value(row, ts_class_dict, TILT_ANGLE),
             accumulated_dose=get_row_value(row, ts_class_dict, ACCUMULATED_DOSE),
-            # Microscope/session acquisition constants (same across the tilt-series);
-            # read per row from the tilt-image's Scipion acquisition object. get_row_value
-            # returns None when the column is absent, so older sqlite files still work.
-            voltage=get_row_value(row, ts_class_dict, VOLTAGE),
-            spherical_aberration=get_row_value(
-                row, ts_class_dict, SPHERICAL_ABERRATION
-            ),
-            amplitude_contrast=get_row_value(row, ts_class_dict, AMPLITUDE_CONTRAST),
-            # dose_rate is intentionally left unset: Scipion stores dose-per-frame
-            # (e-/A^2), not a per-second rate (e-/A^2/s) as CETS dose_rate expects.
+            # Microscope/session acquisition constants no longer live on the tilt-image;
+            # they are emitted as Instrument / AcquisitionSession (see _build_acquisition).
             width=self.img_x,
             height=self.img_y,
             coordinate_systems=[coord_system],
@@ -287,3 +327,30 @@ class ScipionSetOfTiltSeries(BaseConverter):
     @staticmethod
     def _add_ctf_md(ti: TiltImage, index: int, ctf_md: List[CTFMetadata] | None = None):
         ti.ctf_metadata = ctf_md[index] if ctf_md else None
+
+    @staticmethod
+    def _build_acquisition(
+        row: sqlite3.Row, ts_class_dict: Dict[str, str]
+    ) -> Tuple[Instrument, AcquisitionSession]:
+        """Builds the dataset-level Instrument and AcquisitionSession from a Scipion
+        acquisition row.
+
+        voltage / spherical_aberration are physical instrument properties;
+        amplitude_contrast is a CTF-model parameter kept at the session level.
+        ``get_row_value`` returns None when a column is absent, so older sqlite files
+        still work. ``dose_rate`` is intentionally left unset: Scipion stores dose-per-frame
+        (e-/A^2), not a per-second rate (e-/A^2/s) as CETS ``dose_rate`` expects.
+        """
+        instrument = Instrument(
+            id="instrument_0",
+            voltage=get_row_value(row, ts_class_dict, VOLTAGE),
+            spherical_aberration=get_row_value(
+                row, ts_class_dict, SPHERICAL_ABERRATION
+            ),
+        )
+        acquisition_session = AcquisitionSession(
+            id="session_0",
+            instrument_id=instrument.id,
+            amplitude_contrast=get_row_value(row, ts_class_dict, AMPLITUDE_CONTRAST),
+        )
+        return instrument, acquisition_session
