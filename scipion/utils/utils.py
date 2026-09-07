@@ -12,8 +12,6 @@ from cets_data_model.models.models import (
     PointSet3D,
     Average,
     Alignment,
-    Instrument,
-    AcquisitionSession,
 )
 
 
@@ -64,29 +62,6 @@ def write_alignment_set_yaml(
         write_obj_yaml(alignment, output_file)
 
 
-def write_instruments_yaml(
-    instruments: List[Instrument],
-    acquisition_sessions: List[AcquisitionSession],
-    output_directory: Path,
-) -> None:
-    """Writes the dataset-level Instrument and AcquisitionSession objects, one yaml each.
-
-    In the data model these live under ``Dataset.instruments`` / ``Dataset.acquisition_sessions``;
-    since this converter emits bare tilt-series, they are serialized to their own files for
-    higher-level assembly.
-    """
-    for instrument in instruments:
-        write_obj_yaml(
-            instrument,
-            output_directory / f"instrument_{instrument.id}_scipion_to_cets.yaml",
-        )
-    for session in acquisition_sessions:
-        write_obj_yaml(
-            session,
-            output_directory / f"acquisition_session_{session.id}_scipion_to_cets.yaml",
-        )
-
-
 def write_tomo_set_yaml(tomo_list: List[Tomogram], output_directory: Path) -> None:
     for tomo in tomo_list:
         output_file = (
@@ -122,13 +97,7 @@ def write_subtomograms_yaml(
 
 
 def write_obj_yaml(
-    cets_ts_md: TiltSeries
-    | Tomogram
-    | PointSet3D
-    | Average
-    | Alignment
-    | Instrument
-    | AcquisitionSession,
+    cets_ts_md: TiltSeries | Tomogram | PointSet3D | Average | Alignment,
     yaml_file: Path | str | None,
 ) -> None:
     if yaml_file is None:
