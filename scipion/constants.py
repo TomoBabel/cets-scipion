@@ -19,10 +19,13 @@ TILT_ANGLE = "_tiltAngle"
 ACCUMULATED_DOSE = "_acquisition._accumDose"
 # Microscope/session acquisition constants (stored in Scipion's acquisition object).
 # Units match the CETS model: voltage in kV, spherical aberration in mm, amplitude
-# contrast as a dimensionless fraction.
+# contrast as a dimensionless fraction, exposure time in seconds. Scipion's standard
+# tomo acquisition object does not record exposure time, so EXPOSURE_TIME normally
+# resolves to None (read guarded); it is kept for datasets/plugins that do expose it.
 VOLTAGE = "_acquisition._voltage"
 SPHERICAL_ABERRATION = "_acquisition._sphericalAberration"
 AMPLITUDE_CONTRAST = "_acquisition._amplitudeContrast"
+EXPOSURE_TIME = "_acquisition._exposureTime"
 TRANSFORMATION_MATRIX = "_transform._matrix"
 ODD_EVEN_FN = "_oddEvenFileNames"
 
@@ -36,6 +39,7 @@ TILT_SERIES_FIELDS = [
     VOLTAGE,
     SPHERICAL_ABERRATION,
     AMPLITUDE_CONTRAST,
+    EXPOSURE_TIME,
     TRANSFORMATION_MATRIX,
     ODD_EVEN_FN,
 ]

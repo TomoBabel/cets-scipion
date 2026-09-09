@@ -32,6 +32,7 @@ from scipion.constants import (
     VOLTAGE,
     SPHERICAL_ABERRATION,
     AMPLITUDE_CONTRAST,
+    EXPOSURE_TIME,
     # ACQUISITION_ORDER,
     TRANSFORMATION_MATRIX,
     ODD_EVEN_FN,
@@ -212,8 +213,11 @@ class ScipionSetOfTiltSeries(BaseConverter):
             section=section,
             nominal_tilt_angle=get_row_value(row, ts_class_dict, TILT_ANGLE),
             accumulated_dose=get_row_value(row, ts_class_dict, ACCUMULATED_DOSE),
-            # Microscope/session acquisition scalars are stored flat on the TiltSeries
-            # (see _read_acquisition_scalars), not on the tilt-image.
+            # Exposure time is a per-exposure quantity (it can vary per tilt), so it lives on
+            # the tilt-image. Read guarded; Scipion's standard acquisition does not record it.
+            exposure_time=get_row_value(row, ts_class_dict, EXPOSURE_TIME),
+            # The other microscope/session scalars are constant across the series and are
+            # stored flat on the TiltSeries (see _read_acquisition_scalars).
             width=self.img_x,
             height=self.img_y,
             coordinate_systems=[coord_system],
@@ -303,7 +307,8 @@ class ScipionSetOfTiltSeries(BaseConverter):
 
         ``get_row_value`` returns None when a column is absent, so older sqlite files still
         work. ``dose_rate`` is intentionally omitted: Scipion stores dose-per-frame (e-/A^2),
-        not a per-second rate (e-/A^2/s) as CETS ``dose_rate`` expects.
+        not a per-second rate (e-/A^2/s) as CETS ``dose_rate`` expects. (``exposure_time`` is
+        a per-exposure quantity and is read per tilt-image, not here.)
         """
         return {
             "voltage": get_row_value(row, ts_class_dict, VOLTAGE),
