@@ -335,22 +335,22 @@ class ScipionSetOfTiltSeries(BaseConverter):
         """Builds the dataset-level Instrument and AcquisitionSession from a Scipion
         acquisition row.
 
-        voltage / spherical_aberration are physical instrument properties;
-        amplitude_contrast is a CTF-model parameter kept at the session level.
-        ``get_row_value`` returns None when a column is absent, so older sqlite files
-        still work. ``dose_rate`` is intentionally left unset: Scipion stores dose-per-frame
-        (e-/A^2), not a per-second rate (e-/A^2/s) as CETS ``dose_rate`` expects.
+        ``voltage`` is a physical instrument property; ``spherical_aberration`` and
+        ``amplitude_contrast`` are kept at the session level. ``get_row_value`` returns None
+        when a column is absent, so older sqlite files still work. ``dose_rate`` is
+        intentionally left unset: Scipion stores dose-per-frame (e-/A^2), not a per-second
+        rate (e-/A^2/s) as CETS ``dose_rate`` expects.
         """
         instrument = Instrument(
             id="instrument_0",
             voltage=get_row_value(row, ts_class_dict, VOLTAGE),
-            spherical_aberration=get_row_value(
-                row, ts_class_dict, SPHERICAL_ABERRATION
-            ),
         )
         acquisition_session = AcquisitionSession(
             id="session_0",
             instrument_id=instrument.id,
             amplitude_contrast=get_row_value(row, ts_class_dict, AMPLITUDE_CONTRAST),
+            spherical_aberration=get_row_value(
+                row, ts_class_dict, SPHERICAL_ABERRATION
+            ),
         )
         return instrument, acquisition_session
