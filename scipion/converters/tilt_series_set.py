@@ -8,12 +8,7 @@ import numpy as np
 
 from cets_data_model.models.models import (
     TiltImage,
-    Axis,
-    AxisType,
-    CoordinateSystem,
-    CoordinateTransformation,
     Translation,
-    Vector3D,
     Affine,
     Matrix3x3,
     TiltSeries,
@@ -60,6 +55,9 @@ class ScipionSetOfTiltSeries(BaseConverter):
         super().__init__(sqlite_path)
         self.img_x = -1
         self.img_y = -1
+        # Merged (tilt-series) pixel size in Å; cached from the first stack read and used
+        # for the array_to_physical scale and to express alignment shifts in Å.
+        self.pixel_size = -1.0
 
     def scipion_to_cets(
         self,
@@ -79,7 +77,9 @@ class ScipionSetOfTiltSeries(BaseConverter):
         In the current data model the per-projection alignment is NOT stored inside each
         tilt-image's ``coordinate_transformations``. Instead it is represented with the
         dedicated ``ProjectionAlignment`` structure (one per tilt-image, holding the
-        ``[Translation, Affine]`` pair in its ``sequence``), and all of them are aggregated
+        ``[Affine, Translation]`` pair in its ``sequence`` — rotation then shift, shifts in Å —
+        and mapping the tilt-image physical frame to the tilt-series' shared physical frame),
+        and all of them are aggregated
         into a single ``Alignment`` per tilt-series. ``Alignment`` objects live under
         ``Region.alignments``; since this converter emits bare ``TiltSeries`` (not a
         ``Region``), the alignments are returned alongside them for higher-level assembly.
@@ -122,14 +122,6 @@ class ScipionSetOfTiltSeries(BaseConverter):
                 # Sqlite fields of the data to be read from each tilt-image
                 ti_sql_fields = self._get_sql_fields(ts_class_dict, TILT_SERIES_FIELDS)
 
-                # Coordinate system
-                axis_z = Axis(
-                    name="Z",
-                    axis_unit="pixel",
-                    axis_type=AxisType.space,
-                )
-                coordinate_systems = CoordinateSystem(name="SCIPION", axes=[axis_z])
-
                 cursor = conn.cursor()
                 tilt_series_list = []
                 alignments_list = []
@@ -155,9 +147,7 @@ class ScipionSetOfTiltSeries(BaseConverter):
                                 row, ts_class_dict
                             )
                         ti, projection_alignment, odd_fn, even_fn = (
-                            self._ti_from_sqlite_row(
-                                row, ts_class_dict, coordinate_systems
-                            )
+                            self._ti_from_sqlite_row(row, ts_class_dict)
                         )
                         self._add_ctf_md(ti, i, ctf_md_list)
                         ti_list.append(ti)
@@ -213,7 +203,6 @@ class ScipionSetOfTiltSeries(BaseConverter):
         self,
         row: sqlite3.Row,
         ts_class_dict: Dict[str, str],
-        coord_system: CoordinateSystem,
     ) -> Tuple[TiltImage, ProjectionAlignment, Optional[str], Optional[str]]:
         # Read image info
         ts_file = get_row_value(row, ts_class_dict, FILE_NAME)
@@ -222,6 +211,8 @@ class ScipionSetOfTiltSeries(BaseConverter):
             img_info = get_mrc_info(ts_fn)
             self.img_x = img_info.size_x
             self.img_y = img_info.size_y
+            # Merged (tilt-series) pixel size in Å; backs the array_to_physical scale.
+            self.pixel_size = img_info.apix_x if img_info.apix_x else 1.0
         # Get the odd / even filenames
         even_fn, odd_fn = None, None
         odd_even_fn = get_row_value(row, ts_class_dict, ODD_EVEN_FN)
@@ -231,9 +222,17 @@ class ScipionSetOfTiltSeries(BaseConverter):
         tr_matrix_str = get_row_value(row, ts_class_dict, TRANSFORMATION_MATRIX)
         tr_matrix = np.array(ast.literal_eval(tr_matrix_str))
         ts_id = get_row_value(row, ts_class_dict, TS_ID)
-        section = get_row_value(row, ts_class_dict, INDEX)
+        section = int(get_row_value(row, ts_class_dict, INDEX))
         # Unique tilt-image id within the tilt-series (derived from the ts id + section).
         tilt_image_id = f"{ts_id}_{section}"
+
+        # Every image gets an array (pixel, unitless) and a physical (Å) coordinate system
+        # plus exactly one canonical array_to_physical scale transformation (spec constraint).
+        image_cs_name = f"tilt_image_{section:03d}"
+        array_cs, physical_cs = self._gen_coordinate_systems(image_cs_name, ndim=2)
+        array_to_physical = self._gen_array_to_physical(
+            self.pixel_size, array_cs.name, physical_cs.name, ndim=2
+        )
 
         # Create the tilt-image
         ti = TiltImage(
@@ -250,14 +249,19 @@ class ScipionSetOfTiltSeries(BaseConverter):
             # they are emitted as Instrument / AcquisitionSession (see _build_acquisition).
             width=self.img_x,
             height=self.img_y,
-            coordinate_systems=[coord_system],
-            # Alignment is no longer stored here; it lives in the ProjectionAlignment below.
+            coordinate_systems=[array_cs, physical_cs],
+            coordinate_transformations=[array_to_physical],
         )
-        # ProjectionAlignment linked to its tilt-image by tilt_image_id.
+        # ProjectionAlignment: maps this projection's physical frame to the tilt-series'
+        # shared aligned physical frame; linked to the tilt-image by tilt_image_id.
         projection_alignment = self._gen_projection_alignment(
             tr_matrix,
+            self.pixel_size,
             projection_alignment_id=f"{ts_id}_align_{section}",
             tilt_image_id=tilt_image_id,
+            input_cs=physical_cs.name,
+            output_cs=f"tilt_series_{ts_id}_physical",
+            section=section,
         )
         return ti, projection_alignment, odd_fn, even_fn
 
@@ -272,57 +276,61 @@ class ScipionSetOfTiltSeries(BaseConverter):
     def _gen_projection_alignment(
         self,
         transformation_matrix: np.ndarray,
+        pixel_size: float,
         projection_alignment_id: str = "",
         tilt_image_id: str | None = None,
+        input_cs: str | None = None,
+        output_cs: str | None = None,
+        section: int = 0,
     ) -> ProjectionAlignment:
-        """Wraps the per-projection translation and affine rotation into a
-        ProjectionAlignment (order preserved: translation first, affine second).
+        """Wraps the per-projection rotation and shift into a ProjectionAlignment.
+
+        The ``sequence`` is ``[Affine, Translation]`` (rotation applied first, then shift),
+        mapping the tilt-image physical frame (``input_cs``) to the tilt-series' shared
+        aligned physical frame (``output_cs``). Shifts are converted from pixels to Å.
 
         :param projection_alignment_id: unique id for this ProjectionAlignment.
         :param tilt_image_id: id of the TiltImage this alignment applies to.
+        :param input_cs: name of the tilt-image physical coordinate system.
+        :param output_cs: name of the shared tilt-series aligned physical coordinate system.
+        :param section: 0-based projection index, used for the alignment name.
         """
         return ProjectionAlignment(
             id=projection_alignment_id,
             tilt_image_id=tilt_image_id,
             sequence=[
-                self._gen_translation_transform(transformation_matrix),
                 self._gen_rotation_transform(transformation_matrix),
+                self._gen_translation_transform(transformation_matrix, pixel_size),
             ],
-            name="Scipion projection alignment.",
-            input="Tilt-image",
-            output="Aligned tilt-image",
+            name=f"alignment_tilt_{section:03d}",
+            input=input_cs,
+            output=output_cs,
         )
 
     @staticmethod
-    def _gen_translation_transform(transformation_matrix: np.ndarray) -> Translation:
-        translation: Vector3D = [
-            transformation_matrix[0, 2],
-            transformation_matrix[1, 2],
-            0,
+    def _gen_translation_transform(
+        transformation_matrix: np.ndarray, pixel_size: float
+    ) -> Translation:
+        """Per-projection shift (x, y), converted from pixels to Å (physical frame)."""
+        translation = [
+            float(transformation_matrix[0, 2]) * pixel_size,
+            float(transformation_matrix[1, 2]) * pixel_size,
         ]
-        return Translation(
-            translation=translation,
-            name="Scipion stored translation. Shifts in pixels.",
-            input="Tilt-image",
-            output="Tilt-image",
-        )
+        return Translation(translation=translation)
 
     @staticmethod
     def _gen_rotation_transform(
         transformation_matrix: np.ndarray,
-    ) -> CoordinateTransformation:
-        row1: Vector3D = transformation_matrix[0, :].tolist()
-        row1[-1] = 0
-        row2: Vector3D = transformation_matrix[1, :].tolist()
-        row2[-1] = 0
-        row3: Vector3D = [0, 0, 1]
+    ) -> Affine:
+        """Per-projection rotation as a homogeneous 3x3 affine (translation column zeroed);
+        the rotation is dimensionless, so it is the same in the pixel and physical frames."""
+        row1 = [float(v) for v in transformation_matrix[0, :].tolist()]
+        row1[-1] = 0.0
+        row2 = [float(v) for v in transformation_matrix[1, :].tolist()]
+        row2[-1] = 0.0
+        row3 = [0.0, 0.0, 1.0]
         affine_matrix: Matrix3x3 = [row1, row2, row3]
-        return Affine(
-            affine=affine_matrix,
-            name="Scipion stored rotation",
-            input="Tilt-image",
-            output="Tilt-image",
-        )
+        return Affine(affine=affine_matrix)
 
     @staticmethod
     def _add_ctf_md(ti: TiltImage, index: int, ctf_md: List[CTFMetadata] | None = None):

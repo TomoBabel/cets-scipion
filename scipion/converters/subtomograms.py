@@ -7,9 +7,6 @@ from cets_data_model.models.models import (
     AnnotationReference,
     Average,
     AnnotationType,
-    CoordinateSystem,
-    Axis,
-    AxisType,
 )
 from cets_data_model.utils.image_utils import get_mrc_info
 from scipion.constants import (
@@ -24,14 +21,6 @@ from scipion.constants import (
 )
 from scipion.converters.base_converter import BaseConverter
 from scipion.utils.utils_sqlite import connect_db, map_classes_table, get_row_value
-
-
-coordinates_system = [
-    CoordinateSystem(
-        name="Scipion",
-        axes=[Axis(name="ZYZ", axis_type=AxisType.space, axis_unit="pixel")],
-    )
-]
 
 
 class ScipionSetOfSubtomogras(BaseConverter):
@@ -102,24 +91,35 @@ class ScipionSetOfSubtomogras(BaseConverter):
                     )
                     img_info = get_mrc_info(subtomo_fn)
 
-                    # The subtomogram alignment transform (translation + rotation of the
-                    # extracted subvolume) lives on the ParticleMap.
+                    # Every image (particle box) gets an array (voxel, unitless) and a physical
+                    # (Å) coordinate system plus exactly one canonical array_to_physical scale
+                    # (the box voxel size), per the spec.
+                    particle_name = f"particle_{coord_index:03d}"
+                    voxel_size = img_info.apix_x if img_info.apix_x else 1.0
+                    array_cs, physical_cs = self._gen_coordinate_systems(
+                        particle_name, ndim=3
+                    )
+                    array_to_physical = self._gen_array_to_physical(
+                        voxel_size, array_cs.name, physical_cs.name, ndim=3
+                    )
+
+                    # The subtomogram alignment (rotation + shift of the extracted subvolume)
+                    # also lives on the ParticleMap, expressed in the physical (Å) frame.
                     subtomo_euler_matrix = ast.literal_eval(
                         get_row_value(
                             row, coord_set_class_dict, SUBTOMO_TRANSFORM_MATRIX
                         )
                     )
                     subtomo_tr, subtomo_rot = self._gen_subvolume_transforms(
-                        subtomo_euler_matrix, is_coordinate=False
+                        subtomo_euler_matrix,
+                        is_coordinate=False,
+                        pixel_size=voxel_size,
                     )
-                    # Anchor the pose transforms to the declared coordinate system (so
-                    # input/output resolve to a real CoordinateSystem on the ParticleMap
-                    # instead of being null). The pose is an endomorphism within that frame.
-                    cs_name = coordinates_system[0].name
-                    subtomo_tr.input = cs_name
-                    subtomo_tr.output = cs_name
-                    subtomo_rot.input = cs_name
-                    subtomo_rot.output = cs_name
+                    # Anchor the pose (an endomorphism) to the particle physical frame.
+                    subtomo_tr.input = physical_cs.name
+                    subtomo_tr.output = physical_cs.name
+                    subtomo_rot.input = physical_cs.name
+                    subtomo_rot.output = physical_cs.name
                     # TODO (open question #1): the coordinate Euler orientation
                     # (SUBTOMO_COORD_MATRIX) has no home on PointSet3D. It is dropped here;
                     # revisit if per-point orientation of the picked coordinate must be kept.
@@ -138,13 +138,12 @@ class ScipionSetOfSubtomogras(BaseConverter):
                             depth=img_info.size_z,
                             source_annotation_reference_id=reference_id,
                             coord_index=coord_index,
-                            # Declare the frame the pose lives in. The axis name ("ZYZ")
-                            # surfaces the Euler convention of the affine/translation stored
-                            # in coordinate_transformations (the only convention mechanism the
-                            # current schema offers; a dedicated ParticleAlignment type + a
-                            # rotation_convention field are schema-level, not converter-level).
-                            coordinate_systems=coordinates_system,
-                            coordinate_transformations=[subtomo_tr, subtomo_rot],
+                            coordinate_systems=[array_cs, physical_cs],
+                            coordinate_transformations=[
+                                array_to_physical,
+                                subtomo_tr,
+                                subtomo_rot,
+                            ],
                         )
                     )
                 if not particle_maps:
@@ -153,13 +152,15 @@ class ScipionSetOfSubtomogras(BaseConverter):
                         f"tomogram identifier [{tomo_id}]."
                     )
 
+                # Picked coordinates are positions in the tomogram's array (voxel) frame.
+                tomo_array_cs, _ = self._gen_coordinate_systems(tomo_id, ndim=3)
                 point_set = PointSet3D(
                     id=annotation_id,
                     name=f"Scipion coordinates for {tomo_id}",
                     annotation_type=AnnotationType.point_set_3D,
                     source_tomogram_id=tomo_id,
                     origin3D=origin_3d,
-                    coordinate_systems=coordinates_system,
+                    coordinate_systems=[tomo_array_cs],
                 )
                 average = Average(
                     name=f"Scipion subtomograms for {tomo_id}",

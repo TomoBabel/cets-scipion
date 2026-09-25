@@ -59,6 +59,16 @@ class ScipionSetOfTomograms(BaseConverter):
                         else self.scipion_prj_path
                     )
                     img_info = get_mrc_info(tomo_fn)
+                    # Every image (volume) gets an array (voxel, unitless) and a physical (Å)
+                    # coordinate system plus exactly one canonical array_to_physical scale
+                    # (the voxel size), per the spec.
+                    voxel_size = img_info.apix_x if img_info.apix_x else 1.0
+                    array_cs, physical_cs = self._gen_coordinate_systems(
+                        tomo_id, ndim=3
+                    )
+                    array_to_physical = self._gen_array_to_physical(
+                        voxel_size, array_cs.name, physical_cs.name, ndim=3
+                    )
                     # Get the odd / even filenames
                     even_fn, odd_fn = None, None
                     odd_even_fn = get_row_value(
@@ -78,8 +88,8 @@ class ScipionSetOfTomograms(BaseConverter):
                         width=img_info.size_x,
                         height=img_info.size_y,
                         depth=img_info.size_z,
-                        coordinate_systems=None,  # TODO: what about this in tomograms?
-                        coordinate_transformations=None,
+                        coordinate_systems=[array_cs, physical_cs],
+                        coordinate_transformations=[array_to_physical],
                         ctf_corrected=get_row_value(
                             row, tomo_set_class_dict, CTF_CORRECTED
                         ),

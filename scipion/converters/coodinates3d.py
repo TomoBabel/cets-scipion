@@ -1,9 +1,6 @@
 from cets_data_model.models.models import (
     PointSet3D,
     AnnotationType,
-    CoordinateSystem,
-    Axis,
-    AxisType,
 )
 from scipion.constants import (
     COORD_3D_FIELDS,
@@ -15,14 +12,6 @@ from scipion.constants import (
 )
 from scipion.converters.base_converter import BaseConverter
 from scipion.utils.utils_sqlite import connect_db, map_classes_table, get_row_value
-
-
-coordinates_system = [
-    CoordinateSystem(
-        name="Scipion",
-        axes=[Axis(name="ZYZ", axis_type=AxisType.space, axis_unit="pixel")],
-    )
-]
 
 
 class ScipionSetOfCoordinates3D(BaseConverter):
@@ -81,6 +70,9 @@ class ScipionSetOfCoordinates3D(BaseConverter):
                     )
                 if not origin_3d:
                     return None
+                # Picked coordinates are positions in the tomogram's array (voxel) frame;
+                # the tomogram's array_to_physical (see ScipionSetOfTomograms) converts to Å.
+                tomo_array_cs, _ = self._gen_coordinate_systems(tomo_id, ndim=3)
                 point_set = PointSet3D(
                     # TODO (open question #3): id-generation policy. The tomogram id is
                     # used here so that AnnotationReference.source_annotation_id can resolve
@@ -90,7 +82,7 @@ class ScipionSetOfCoordinates3D(BaseConverter):
                     annotation_type=AnnotationType.point_set_3D,
                     source_tomogram_id=tomo_id,
                     origin3D=origin_3d,
-                    coordinate_systems=coordinates_system,
+                    coordinate_systems=[tomo_array_cs],
                 )
                 # if out_directory:
                 #     write_coords_set_yaml(point_set, tomo_id, Path(out_directory))
