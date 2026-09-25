@@ -2,11 +2,10 @@ from pathlib import Path
 
 from scipion.converters.coodinates3d import ScipionSetOfCoordinates3D
 from scipion.converters.ctf_set import ScipionSetOfCtf
-
-# from scipion.converters.subtomograms import ScipionSetOfSubtomogras
+from scipion.converters.subtomograms import ScipionSetOfSubtomogras
 from scipion.converters.tilt_series_set import ScipionSetOfTiltSeries
 from scipion.converters.tomograms_set import ScipionSetOfTomograms
-from scipion.utils.utils import write_coords_set_yaml
+from scipion.utils.utils import write_coords_set_yaml, write_subtomograms_yaml
 
 ### SCIPION TO CETS #################################################################
 # Files
@@ -41,13 +40,14 @@ for tomo in tomo_md_list or []:
     if point_set is not None:
         write_coords_set_yaml(point_set, tomo_id, Path(scratch_dir))
 
-# # Subtomograms -> (PointSet3D, Average) per tomogram (Option A). The PointSet3D holds the
-# # coordinates (Region.annotations) and the Average holds the extracted ParticleMaps
-# # (Dataset.averages), linked via AnnotationReference + coord_index.
-# sci_subtomo_set = ScipionSetOfSubtomogras(subtomo_db_path)
-# for tomo in tomo_md_list:
-#     tomo_id = tomo.tilt_series_id
-#     result = sci_subtomo_set.scipion_to_cets(tomo_id)
-#     if result is not None:
-#         subtomo_point_set, average = result
-#         write_subtomograms_yaml(subtomo_point_set, average, tomo_id, Path(scratch_dir))
+# Subtomograms -> (PointSet3D, Average) per tomogram (Option A). The PointSet3D holds the
+# picked coordinates (Region.annotations) and the Average holds the extracted ParticleMaps
+# (Dataset.averages); each ParticleMap links back to a coordinate via
+# source_region_id + source_annotation_id + coord_index.
+sci_subtomo_set = ScipionSetOfSubtomogras(subtomo_db_path)
+for tomo in tomo_md_list or []:
+    tomo_id = tomo.tilt_series_id
+    result = sci_subtomo_set.scipion_to_cets(tomo_id)
+    if result is not None:
+        subtomo_point_set, average = result
+        write_subtomograms_yaml(subtomo_point_set, average, tomo_id, Path(scratch_dir))

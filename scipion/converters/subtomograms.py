@@ -4,7 +4,6 @@ from typing import Tuple
 from cets_data_model.models.models import (
     PointSet3D,
     ParticleMap,
-    AnnotationReference,
     Average,
     AnnotationType,
 )
@@ -39,13 +38,10 @@ class ScipionSetOfSubtomogras(BaseConverter):
         * the picked coordinates -> a ``PointSet3D`` annotation (stored under
           ``Region.annotations``), linked to its tomogram via ``source_tomogram_id``;
         * each extracted subvolume -> a ``ParticleMap`` (stored under ``Average.particle_maps``),
-          linked back to a single coordinate via ``source_annotation_reference_id`` +
-          ``coord_index``.
-
-        The bridge between the two is an ``AnnotationReference`` inside ``Average.annotations``
-        that points at the ``PointSet3D`` (by region id + annotation id). ``coord_index`` is the
-        0-based index into ``PointSet3D.origin3D``, so it must stay aligned with the order in
-        which the coordinates are appended below.
+          linked back to a single picked coordinate via ``source_region_id`` +
+          ``source_annotation_id`` (the region and the ``PointSet3D`` it lives in) plus
+          ``coord_index`` (the 0-based index into ``PointSet3D.origin3D``, so it must stay
+          aligned with the order in which the coordinates are appended below).
 
         This method returns the ``(PointSet3D, Average)`` pair; the caller is responsible for
         placing the ``PointSet3D`` inside the matching ``Region`` and the ``Average`` inside the
@@ -74,11 +70,11 @@ class ScipionSetOfSubtomogras(BaseConverter):
                 cursor.execute(query)  # execute the query
 
                 # TODO (open question #3): id-generation policy. tomo_id is reused as the
-                # Region id and as the seed of the annotation/reference ids. These must be
-                # unique within their respective scopes (Region within Dataset, Annotation
-                # within Region.annotations, AnnotationReference within Average.annotations).
+                # Region id and as the seed of the annotation id. These must be unique within
+                # their respective scopes (Region within Dataset, Annotation within
+                # Region.annotations).
+                region_id = tomo_id
                 annotation_id = f"scipion_coords_{tomo_id}"
-                reference_id = f"scipion_ref_{tomo_id}"
 
                 origin_3d = []
                 particle_maps = []
@@ -136,7 +132,10 @@ class ScipionSetOfSubtomogras(BaseConverter):
                             width=img_info.size_x,
                             height=img_info.size_y,
                             depth=img_info.size_z,
-                            source_annotation_reference_id=reference_id,
+                            # Link this subvolume back to the picked coordinate it was
+                            # extracted from: region + PointSet3D annotation + point index.
+                            source_region_id=region_id,
+                            source_annotation_id=annotation_id,
                             coord_index=coord_index,
                             coordinate_systems=[array_cs, physical_cs],
                             coordinate_transformations=[
@@ -164,13 +163,6 @@ class ScipionSetOfSubtomogras(BaseConverter):
                 )
                 average = Average(
                     name=f"Scipion subtomograms for {tomo_id}",
-                    annotations=[
-                        AnnotationReference(
-                            id=reference_id,
-                            source_region_id=tomo_id,
-                            source_annotation_id=annotation_id,
-                        )
-                    ],
                     particle_maps=particle_maps,
                 )
                 # if out_directory:
