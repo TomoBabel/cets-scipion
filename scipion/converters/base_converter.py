@@ -9,6 +9,7 @@ from cets_data_model.models.models import (
     CoordinateSystem,
     Axis,
     AxisType,
+    AxisUnit,
 )
 from scipion.utils.utils import validate_file
 
@@ -53,18 +54,21 @@ class BaseConverter:
         """Builds the (array, physical) coordinate-system pair for an ``ndim`` image/frame.
 
         Names follow the proposal convention ``{name}_array`` / ``{name}_physical``. The array
-        system is pixel/array coords (unitless); the physical system is in Å. ``ndim`` is 2 for
-        2-D images (x, y) and 3 for volumes (x, y, z).
+        system is pixel/array coords (unit ``pixel``); the physical system is in Å. ``ndim`` is 2
+        for 2-D images (x, y) and 3 for volumes (x, y, z).
         """
         axes = ("x", "y", "z")[:ndim]
         array_cs = CoordinateSystem(
             name=f"{name}_array",
-            axes=[Axis(name=a, axis_type=AxisType.array, axis_unit=None) for a in axes],
+            axes=[
+                Axis(name=a, axis_type=AxisType.array, axis_unit=AxisUnit.pixel)
+                for a in axes
+            ],
         )
         physical_cs = CoordinateSystem(
             name=f"{name}_physical",
             axes=[
-                Axis(name=a, axis_type=AxisType.space, axis_unit="angstrom")
+                Axis(name=a, axis_type=AxisType.space, axis_unit=AxisUnit.angstrom)
                 for a in axes
             ],
         )
