@@ -29,7 +29,7 @@ from scipion.constants import (
     VOLTAGE,
     SPHERICAL_ABERRATION,
     AMPLITUDE_CONTRAST,
-    # ACQUISITION_ORDER,
+    ACQUISITION_ORDER,
     TRANSFORMATION_MATRIX,
     ODD_EVEN_FN,
     CTF_CORRECTED,
@@ -241,7 +241,9 @@ class ScipionSetOfTiltSeries(BaseConverter):
             path=str(ts_fn),
             # even_path=even_fn,
             # odd_path=odd_fn,
-            # acquisition_order=get_row_value(row, ts_class_dict, ACQUISITION_ORDER),
+            # Scipion records the temporal collection order per tilt image (_acqOrder);
+            # map it straight to the CETS field instead of re-deriving it from the dose.
+            acquisition_order=get_row_value(row, ts_class_dict, ACQUISITION_ORDER),
             section=section,
             nominal_tilt_angle=get_row_value(row, ts_class_dict, TILT_ANGLE),
             accumulated_dose=get_row_value(row, ts_class_dict, ACCUMULATED_DOSE),

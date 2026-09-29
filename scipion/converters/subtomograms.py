@@ -26,6 +26,7 @@ class ScipionSetOfSubtomogras(BaseConverter):
     def scipion_to_cets(
         self,
         tomo_id: str,
+        coords_pixel_size: float | None = None,
         # out_directory: str | None = None
     ) -> Tuple[PointSet3D, Average] | None:
         """Converts a set of subtomograms in Scipion sqlite format corresponding to the
@@ -52,6 +53,17 @@ class ScipionSetOfSubtomogras(BaseConverter):
         subtomograms will be converted, as in Scipion the subtomograms from all the tomograms are
         stored together.
         :type tomo_id: str.
+
+        :param coords_pixel_size: voxel size (Å) of the tomogram the particles were picked in.
+        The picked coordinates (``origin3D``) are positions in that tomogram's array (voxel)
+        frame, so when this is provided the returned ``PointSet3D`` also carries the physical
+        (Å) coordinate system and the canonical ``array_to_physical`` scale (making the
+        coordinates self-describing). Pass the tomogram's own voxel size so both share the exact
+        same physical scale. Note this is the tomogram voxel size, not the extracted-particle
+        box voxel size (which is read per particle from its .mrc header for the ParticleMaps).
+        When omitted, only the array coordinate system is attached and
+        ``coordinate_transformations`` is left empty.
+        :type coords_pixel_size: float, optional. Defaults to None.
         """
         db_connection = connect_db(self.db_path)
         if db_connection is not None:
@@ -151,15 +163,35 @@ class ScipionSetOfSubtomogras(BaseConverter):
                         f"tomogram identifier [{tomo_id}]."
                     )
 
-                # Picked coordinates are positions in the tomogram's array (voxel) frame.
-                tomo_array_cs, _ = self._gen_coordinate_systems(tomo_id, ndim=3)
+                # Picked coordinates are positions in the tomogram's array (voxel) frame. When
+                # the tomogram voxel size is known we also attach the physical (Å) system and
+                # the canonical array_to_physical scale, making the coordinates self-describing.
+                # The coordinate-system names match the tomogram's ({tomo_id}_array /
+                # {tomo_id}_physical), so both refer to the same frame.
+                tomo_array_cs, tomo_physical_cs = self._gen_coordinate_systems(
+                    tomo_id, ndim=3
+                )
+                if coords_pixel_size is not None:
+                    coordinate_systems = [tomo_array_cs, tomo_physical_cs]
+                    coordinate_transformations = [
+                        self._gen_array_to_physical(
+                            coords_pixel_size,
+                            tomo_array_cs.name,
+                            tomo_physical_cs.name,
+                            ndim=3,
+                        )
+                    ]
+                else:
+                    coordinate_systems = [tomo_array_cs]
+                    coordinate_transformations = []
                 point_set = PointSet3D(
                     id=annotation_id,
                     name=f"Scipion coordinates for {tomo_id}",
                     annotation_type=AnnotationType.point_set_3D,
                     source_tomogram_id=tomo_id,
                     origin3D=origin_3d,
-                    coordinate_systems=[tomo_array_cs],
+                    coordinate_systems=coordinate_systems,
+                    coordinate_transformations=coordinate_transformations,
                 )
                 average = Average(
                     name=f"Scipion subtomograms for {tomo_id}",

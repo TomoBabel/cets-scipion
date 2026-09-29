@@ -7,6 +7,23 @@ from scipion.converters.tilt_series_set import ScipionSetOfTiltSeries
 from scipion.converters.tomograms_set import ScipionSetOfTomograms
 from scipion.utils.utils import write_coords_set_yaml, write_subtomograms_yaml
 
+
+def tomo_voxel_size(tomo):
+    """Voxel size (Å) taken from a Tomogram's canonical array_to_physical scale (or None).
+
+    Picked coordinates live in the tomogram's array (voxel) frame, so their PointSet3D should
+    reuse the tomogram's own voxel size to reach physical (Å) units with the exact same scale.
+    """
+    return next(
+        (
+            t.scale[0]
+            for t in tomo.coordinate_transformations or []
+            if getattr(t, "name", None) == "array_to_physical"
+        ),
+        None,
+    )
+
+
 ### SCIPION TO CETS #################################################################
 # Files
 scratch_dir = "/home/jjimenez/CZII/cets_scratch_dir"
@@ -36,7 +53,9 @@ tomo_md_list = sci_tomo_set.scipion_to_cets(out_directory=Path(scratch_dir))
 sci_coords_set = ScipionSetOfCoordinates3D(coords_db_path)
 for tomo in tomo_md_list or []:
     tomo_id = tomo.tilt_series_id
-    point_set = sci_coords_set.scipion_to_cets(tomo_id)
+    point_set = sci_coords_set.scipion_to_cets(
+        tomo_id, pixel_size=tomo_voxel_size(tomo)
+    )
     if point_set is not None:
         write_coords_set_yaml(point_set, tomo_id, Path(scratch_dir))
 
@@ -47,7 +66,9 @@ for tomo in tomo_md_list or []:
 sci_subtomo_set = ScipionSetOfSubtomogras(subtomo_db_path)
 for tomo in tomo_md_list or []:
     tomo_id = tomo.tilt_series_id
-    result = sci_subtomo_set.scipion_to_cets(tomo_id)
+    result = sci_subtomo_set.scipion_to_cets(
+        tomo_id, coords_pixel_size=tomo_voxel_size(tomo)
+    )
     if result is not None:
         subtomo_point_set, average = result
         write_subtomograms_yaml(subtomo_point_set, average, tomo_id, Path(scratch_dir))

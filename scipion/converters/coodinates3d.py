@@ -18,6 +18,7 @@ class ScipionSetOfCoordinates3D(BaseConverter):
     def scipion_to_cets(
         self,
         tomo_id: str,
+        pixel_size: float | None = None,
         # out_directory: str | None = None
     ) -> PointSet3D | None:
         """Converts the set of coordinates corresponding to the introduced tomogram identifier
@@ -37,6 +38,15 @@ class ScipionSetOfCoordinates3D(BaseConverter):
         coordinates will be converted, as in Scipion the coordinates from all the tomograms are
         stored together.
         :type tomo_id: str.
+
+        :param pixel_size: voxel size (Å) of the tomogram these coordinates were picked in.
+        When provided, the returned ``PointSet3D`` also carries the physical (Å) coordinate
+        system and the canonical ``array_to_physical`` scale, so the coordinates are
+        self-describing (convertible to Å without resolving the source tomogram). Pass the
+        tomogram's own voxel size so both share the exact same physical scale. When omitted,
+        only the array (voxel) coordinate system is attached and
+        ``coordinate_transformations`` is left empty.
+        :type pixel_size: float, optional. Defaults to None.
         """
         db_connection = connect_db(self.db_path)
         if db_connection is not None:
@@ -70,9 +80,22 @@ class ScipionSetOfCoordinates3D(BaseConverter):
                     )
                 if not origin_3d:
                     return None
-                # Picked coordinates are positions in the tomogram's array (voxel) frame;
-                # the tomogram's array_to_physical (see ScipionSetOfTomograms) converts to Å.
-                tomo_array_cs, _ = self._gen_coordinate_systems(tomo_id, ndim=3)
+                # Picked coordinates are positions in the tomogram's array (voxel) frame.
+                # The coordinate-system names match the tomogram's ({tomo_id}_array /
+                # {tomo_id}_physical), so they refer to the very same frame. When the
+                # tomogram voxel size is known we also attach the physical (Å) system and the
+                # canonical array_to_physical scale, making the coordinates self-describing.
+                array_cs, physical_cs = self._gen_coordinate_systems(tomo_id, ndim=3)
+                if pixel_size is not None:
+                    coordinate_systems = [array_cs, physical_cs]
+                    coordinate_transformations = [
+                        self._gen_array_to_physical(
+                            pixel_size, array_cs.name, physical_cs.name, ndim=3
+                        )
+                    ]
+                else:
+                    coordinate_systems = [array_cs]
+                    coordinate_transformations = []
                 point_set = PointSet3D(
                     # TODO (open question #3): id-generation policy. The tomogram id is
                     # used here so that AnnotationReference.source_annotation_id can resolve
@@ -82,7 +105,8 @@ class ScipionSetOfCoordinates3D(BaseConverter):
                     annotation_type=AnnotationType.point_set_3D,
                     source_tomogram_id=tomo_id,
                     origin3D=origin_3d,
-                    coordinate_systems=[tomo_array_cs],
+                    coordinate_systems=coordinate_systems,
+                    coordinate_transformations=coordinate_transformations,
                 )
                 # if out_directory:
                 #     write_coords_set_yaml(point_set, tomo_id, Path(out_directory))
