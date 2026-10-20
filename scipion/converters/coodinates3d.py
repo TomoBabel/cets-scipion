@@ -20,7 +20,11 @@ from scipion.utils.utils_sqlite import connect_db, map_classes_table, get_row_va
 coordinates_system = [
     CoordinateSystem(
         name="Scipion",
-        axes=[Axis(name="ZYZ", axis_type=AxisType.space, axis_unit="pixel")],
+        axes=[
+            Axis(name="x", axis_type=AxisType.space, axis_unit="pixel"),
+            Axis(name="y", axis_type=AxisType.space, axis_unit="pixel"),
+            Axis(name="z", axis_type=AxisType.space, axis_unit="pixel"),
+        ],
     )
 ]
 
