@@ -15,7 +15,7 @@ from cets_data_model.models.models import (
     Translation,
     Vector3D,
     Affine,
-    Matrix3x3,
+    Matrix2x2,
     TiltSeries,
     CTFMetadata,
     ProjectionAlignment,
@@ -258,12 +258,9 @@ class ScipionSetOfTiltSeries(BaseConverter):
     def _gen_rotation_transform(
         transformation_matrix: np.ndarray,
     ) -> CoordinateTransformation:
-        row1: Vector3D = transformation_matrix[0, :].tolist()
-        row1[-1] = 0
-        row2: Vector3D = transformation_matrix[1, :].tolist()
-        row2[-1] = 0
-        row3: Vector3D = [0, 0, 1]
-        affine_matrix: Matrix3x3 = [row1, row2, row3]
+        # The CETS Affine is the linear part only (2x2 for a tilt image); the
+        # shifts are written by _gen_translation_transform.
+        affine_matrix: Matrix2x2 = transformation_matrix[:2, :2].tolist()
         return Affine(
             affine=affine_matrix,
             name="Scipion stored rotation",
