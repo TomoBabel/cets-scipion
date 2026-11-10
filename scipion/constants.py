@@ -17,6 +17,12 @@ INDEX = "_index"
 ACQUISITION_ORDER = "_acqOrder"
 TILT_ANGLE = "_tiltAngle"
 ACCUMULATED_DOSE = "_acquisition._accumDose"
+# Microscope/session acquisition constants (stored in Scipion's acquisition object).
+# Units match the CETS model: voltage in kV, spherical aberration in mm, amplitude
+# contrast as a dimensionless fraction.
+VOLTAGE = "_acquisition._voltage"
+SPHERICAL_ABERRATION = "_acquisition._sphericalAberration"
+AMPLITUDE_CONTRAST = "_acquisition._amplitudeContrast"
 TRANSFORMATION_MATRIX = "_transform._matrix"
 ODD_EVEN_FN = "_oddEvenFileNames"
 
@@ -27,6 +33,9 @@ TILT_SERIES_FIELDS = [
     ACQUISITION_ORDER,
     TILT_ANGLE,
     ACCUMULATED_DOSE,
+    VOLTAGE,
+    SPHERICAL_ABERRATION,
+    AMPLITUDE_CONTRAST,
     TRANSFORMATION_MATRIX,
     ODD_EVEN_FN,
 ]

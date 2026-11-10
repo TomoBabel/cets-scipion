@@ -4,12 +4,8 @@ from typing import Tuple
 from cets_data_model.models.models import (
     PointSet3D,
     ParticleMap,
-    AnnotationReference,
     Average,
     AnnotationType,
-    CoordinateSystem,
-    Axis,
-    AxisType,
 )
 from cets_data_model.utils.image_utils import get_mrc_info
 from scipion.constants import (
@@ -26,18 +22,11 @@ from scipion.converters.base_converter import BaseConverter
 from scipion.utils.utils_sqlite import connect_db, map_classes_table, get_row_value
 
 
-coordinates_system = [
-    CoordinateSystem(
-        name="Scipion",
-        axes=[Axis(name="ZYZ", axis_type=AxisType.space, axis_unit="pixel")],
-    )
-]
-
-
 class ScipionSetOfSubtomogras(BaseConverter):
     def scipion_to_cets(
         self,
         tomo_id: str,
+        coords_pixel_size: float | None = None,
         # out_directory: str | None = None
     ) -> Tuple[PointSet3D, Average] | None:
         """Converts a set of subtomograms in Scipion sqlite format corresponding to the
@@ -50,13 +39,10 @@ class ScipionSetOfSubtomogras(BaseConverter):
         * the picked coordinates -> a ``PointSet3D`` annotation (stored under
           ``Region.annotations``), linked to its tomogram via ``source_tomogram_id``;
         * each extracted subvolume -> a ``ParticleMap`` (stored under ``Average.particle_maps``),
-          linked back to a single coordinate via ``source_annotation_reference_id`` +
-          ``coord_index``.
-
-        The bridge between the two is an ``AnnotationReference`` inside ``Average.annotations``
-        that points at the ``PointSet3D`` (by region id + annotation id). ``coord_index`` is the
-        0-based index into ``PointSet3D.origin3D``, so it must stay aligned with the order in
-        which the coordinates are appended below.
+          linked back to a single picked coordinate via ``source_region_id`` +
+          ``source_annotation_id`` (the region and the ``PointSet3D`` it lives in) plus
+          ``coord_index`` (the 0-based index into ``PointSet3D.origin3D``, so it must stay
+          aligned with the order in which the coordinates are appended below).
 
         This method returns the ``(PointSet3D, Average)`` pair; the caller is responsible for
         placing the ``PointSet3D`` inside the matching ``Region`` and the ``Average`` inside the
@@ -67,6 +53,17 @@ class ScipionSetOfSubtomogras(BaseConverter):
         subtomograms will be converted, as in Scipion the subtomograms from all the tomograms are
         stored together.
         :type tomo_id: str.
+
+        :param coords_pixel_size: voxel size (Å) of the tomogram the particles were picked in.
+        The picked coordinates (``origin3D``) are positions in that tomogram's array (voxel)
+        frame, so when this is provided the returned ``PointSet3D`` also carries the physical
+        (Å) coordinate system and the canonical ``array_to_physical`` scale (making the
+        coordinates self-describing). Pass the tomogram's own voxel size so both share the exact
+        same physical scale. Note this is the tomogram voxel size, not the extracted-particle
+        box voxel size (which is read per particle from its .mrc header for the ParticleMaps).
+        When omitted, only the array coordinate system is attached and
+        ``coordinate_transformations`` is left empty.
+        :type coords_pixel_size: float, optional. Defaults to None.
         """
         db_connection = connect_db(self.db_path)
         if db_connection is not None:
@@ -85,11 +82,11 @@ class ScipionSetOfSubtomogras(BaseConverter):
                 cursor.execute(query)  # execute the query
 
                 # TODO (open question #3): id-generation policy. tomo_id is reused as the
-                # Region id and as the seed of the annotation/reference ids. These must be
-                # unique within their respective scopes (Region within Dataset, Annotation
-                # within Region.annotations, AnnotationReference within Average.annotations).
+                # Region id and as the seed of the annotation id. These must be unique within
+                # their respective scopes (Region within Dataset, Annotation within
+                # Region.annotations).
+                region_id = tomo_id
                 annotation_id = f"scipion_coords_{tomo_id}"
-                reference_id = f"scipion_ref_{tomo_id}"
 
                 origin_3d = []
                 particle_maps = []
@@ -102,24 +99,35 @@ class ScipionSetOfSubtomogras(BaseConverter):
                     )
                     img_info = get_mrc_info(subtomo_fn)
 
-                    # The subtomogram alignment transform (translation + rotation of the
-                    # extracted subvolume) lives on the ParticleMap.
+                    # Every image (particle box) gets an array (voxel, unitless) and a physical
+                    # (Å) coordinate system plus exactly one canonical array_to_physical scale
+                    # (the box voxel size), per the spec.
+                    particle_name = f"particle_{coord_index:03d}"
+                    voxel_size = img_info.apix_x if img_info.apix_x else 1.0
+                    array_cs, physical_cs = self._gen_coordinate_systems(
+                        particle_name, ndim=3
+                    )
+                    array_to_physical = self._gen_array_to_physical(
+                        voxel_size, array_cs.name, physical_cs.name, ndim=3
+                    )
+
+                    # The subtomogram alignment (rotation + shift of the extracted subvolume)
+                    # also lives on the ParticleMap, expressed in the physical (Å) frame.
                     subtomo_euler_matrix = ast.literal_eval(
                         get_row_value(
                             row, coord_set_class_dict, SUBTOMO_TRANSFORM_MATRIX
                         )
                     )
                     subtomo_tr, subtomo_rot = self._gen_subvolume_transforms(
-                        subtomo_euler_matrix, is_coordinate=False
+                        subtomo_euler_matrix,
+                        is_coordinate=False,
+                        pixel_size=voxel_size,
                     )
-                    # Anchor the pose transforms to the declared coordinate system (so
-                    # input/output resolve to a real CoordinateSystem on the ParticleMap
-                    # instead of being null). The pose is an endomorphism within that frame.
-                    cs_name = coordinates_system[0].name
-                    subtomo_tr.input = cs_name
-                    subtomo_tr.output = cs_name
-                    subtomo_rot.input = cs_name
-                    subtomo_rot.output = cs_name
+                    # Anchor the pose (an endomorphism) to the particle physical frame.
+                    subtomo_tr.input = physical_cs.name
+                    subtomo_tr.output = physical_cs.name
+                    subtomo_rot.input = physical_cs.name
+                    subtomo_rot.output = physical_cs.name
                     # TODO (open question #1): the coordinate Euler orientation
                     # (SUBTOMO_COORD_MATRIX) has no home on PointSet3D. It is dropped here;
                     # revisit if per-point orientation of the picked coordinate must be kept.
@@ -136,15 +144,17 @@ class ScipionSetOfSubtomogras(BaseConverter):
                             width=img_info.size_x,
                             height=img_info.size_y,
                             depth=img_info.size_z,
-                            source_annotation_reference_id=reference_id,
+                            # Link this subvolume back to the picked coordinate it was
+                            # extracted from: region + PointSet3D annotation + point index.
+                            source_region_id=region_id,
+                            source_annotation_id=annotation_id,
                             coord_index=coord_index,
-                            # Declare the frame the pose lives in. The axis name ("ZYZ")
-                            # surfaces the Euler convention of the affine/translation stored
-                            # in coordinate_transformations (the only convention mechanism the
-                            # current schema offers; a dedicated ParticleAlignment type + a
-                            # rotation_convention field are schema-level, not converter-level).
-                            coordinate_systems=coordinates_system,
-                            coordinate_transformations=[subtomo_tr, subtomo_rot],
+                            coordinate_systems=[array_cs, physical_cs],
+                            coordinate_transformations=[
+                                array_to_physical,
+                                subtomo_tr,
+                                subtomo_rot,
+                            ],
                         )
                     )
                 if not particle_maps:
@@ -153,23 +163,38 @@ class ScipionSetOfSubtomogras(BaseConverter):
                         f"tomogram identifier [{tomo_id}]."
                     )
 
+                # Picked coordinates are positions in the tomogram's array (voxel) frame. When
+                # the tomogram voxel size is known we also attach the physical (Å) system and
+                # the canonical array_to_physical scale, making the coordinates self-describing.
+                # The coordinate-system names match the tomogram's ({tomo_id}_array /
+                # {tomo_id}_physical), so both refer to the same frame.
+                tomo_array_cs, tomo_physical_cs = self._gen_coordinate_systems(
+                    tomo_id, ndim=3
+                )
+                if coords_pixel_size is not None:
+                    coordinate_systems = [tomo_array_cs, tomo_physical_cs]
+                    coordinate_transformations = [
+                        self._gen_array_to_physical(
+                            coords_pixel_size,
+                            tomo_array_cs.name,
+                            tomo_physical_cs.name,
+                            ndim=3,
+                        )
+                    ]
+                else:
+                    coordinate_systems = [tomo_array_cs]
+                    coordinate_transformations = []
                 point_set = PointSet3D(
                     id=annotation_id,
                     name=f"Scipion coordinates for {tomo_id}",
                     annotation_type=AnnotationType.point_set_3D,
                     source_tomogram_id=tomo_id,
                     origin3D=origin_3d,
-                    coordinate_systems=coordinates_system,
+                    coordinate_systems=coordinate_systems,
+                    coordinate_transformations=coordinate_transformations,
                 )
                 average = Average(
                     name=f"Scipion subtomograms for {tomo_id}",
-                    annotations=[
-                        AnnotationReference(
-                            id=reference_id,
-                            source_region_id=tomo_id,
-                            source_annotation_id=annotation_id,
-                        )
-                    ],
                     particle_maps=particle_maps,
                 )
                 # if out_directory:
