@@ -68,7 +68,10 @@ COORD_Z = "_z"
 TOMO_ID = "_tomoId"
 EULER_MATRIX = "_eulerMatrix._matrix"
 
-COORD_3D_FIELDS = [COORD_X, COORD_Y, COORD_Z, TOMO_ID, EULER_MATRIX]
+# Score given by the picking program to each coordinate (Coordinate3D._score)
+COORD_SCORE = "_score"
+
+COORD_3D_FIELDS = [COORD_X, COORD_Y, COORD_Z, TOMO_ID, EULER_MATRIX, COORD_SCORE]
 
 # SUBTOMOGRAMS ########################################
 SUBTOMO_X = "_coordinate._x"

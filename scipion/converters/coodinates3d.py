@@ -9,6 +9,7 @@ from scipion.constants import (
     COORD_X,
     COORD_Y,
     COORD_Z,
+    COORD_SCORE,
 )
 from scipion.converters.base_converter import BaseConverter
 from scipion.utils.utils_sqlite import connect_db, map_classes_table, get_row_value
@@ -27,8 +28,10 @@ class ScipionSetOfCoordinates3D(BaseConverter):
         Picked coordinates are represented as a ``PointSet3D``
         annotation. The ``PointSet3D`` holds the coordinates in ``origin3D``
         (an Nx3 array) and links back to the tomogram they were picked in through
-        ``source_tomogram_id``. This annotation is meant to be stored under a
-        ``Region.annotations`` list.
+        ``source_tomogram_id``. The score given by the picking program to each coordinate
+        (Scipion ``Coordinate3D._score``) is stored in ``scores``, aligned with ``origin3D``;
+        it is left empty if the set does not store a score for every coordinate. This
+        annotation is meant to be stored under a ``Region.annotations`` list.
 
         Scipion stores the coordinates of every tomogram together, so this method returns
         one ``PointSet3D`` per tomogram (matching the "one PointSet3D per tomogram" decision
@@ -64,6 +67,7 @@ class ScipionSetOfCoordinates3D(BaseConverter):
                 query = f'SELECT {coord_sql_fields} FROM "{OBJECTS_TBL}" WHERE {tomo_id_col_name}="{tomo_id}"'
                 cursor.execute(query)  # execute the query
                 origin_3d = []
+                scores = []
                 for row in cursor:
                     # TODO (open question #1): the per-coordinate Euler orientation
                     # (EULER_MATRIX) cannot be stored on a PointSet3D, which only carries
@@ -78,8 +82,12 @@ class ScipionSetOfCoordinates3D(BaseConverter):
                             get_row_value(row, coord_set_class_dict, COORD_Z),
                         ]
                     )
+                    scores.append(get_row_value(row, coord_set_class_dict, COORD_SCORE))
                 if not origin_3d:
                     return None
+                # The scores are only converted if every coordinate has one (older sets
+                # may not have the _score column), as they must be aligned with origin3D.
+                has_scores = all(score is not None for score in scores)
                 # Picked coordinates are positions in the tomogram's array (voxel) frame.
                 # The coordinate-system names match the tomogram's ({tomo_id}_array /
                 # {tomo_id}_physical), so they refer to the very same frame. When the
@@ -105,6 +113,7 @@ class ScipionSetOfCoordinates3D(BaseConverter):
                     annotation_type=AnnotationType.point_set_3D,
                     source_tomogram_id=tomo_id,
                     origin3D=origin_3d,
+                    scores=[float(s) for s in scores] if has_scores else None,
                     coordinate_systems=coordinate_systems,
                     coordinate_transformations=coordinate_transformations,
                 )
