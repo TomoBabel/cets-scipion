@@ -3,6 +3,8 @@ import os
 from pathlib import Path
 from typing import Dict, List, Any, Tuple
 
+import numpy as np
+
 from cets_data_model.models.models import (
     Affine,
     Translation,
@@ -168,25 +170,35 @@ class BaseConverter:
         euler_matrix: List[List[float]],
         is_coordinate: bool = True,
         pixel_size: float = 1.0,
-    ) -> Tuple[Translation, Affine]:
+    ) -> Tuple[Affine, Translation]:
+        """Pose of a particle as an ``Affine`` (rotation) and a ``Translation`` (Å), to be
+        applied in that order: a point r of the reference lands on p = R @ r + t in the
+        particle box.
+
+        Scipion stores the opposite transformation (particle -> reference, shifts in pixels),
+        so the matrix is inverted. This way the pose has the same direction as the ones of
+        cets-dynamo, cets-gapstop and cets-pytom_tm (reference/template -> particle).
+
+        :param euler_matrix: 4x4 Scipion transformation matrix.
+        :param is_coordinate: if True, only its rotation is kept (picked coordinates have no
+        shifts).
+        :param pixel_size: voxel size (Å) of the particle box, to express the shifts in Å.
+        """
+        scipion_matrix = np.array(euler_matrix, dtype=float)
         if is_coordinate:
             name = "Coordinate 3D"
-            translation_vector = [0.0, 0.0, 0.0]
+            scipion_matrix[:3, 3] = 0.0
         else:
             name = "Subtomogram"
-            # Shifts converted from pixels to Å (physical frame).
-            translation_vector = [
-                euler_matrix[0][-1] * pixel_size,
-                euler_matrix[1][-1] * pixel_size,
-                euler_matrix[2][-1] * pixel_size,
-            ]
-        angular_matrix = [
-            sublist[:3] for sublist in euler_matrix[:3]
-        ]  # Take only the angular 3x3 sub-matrix
+        # Scipion (particle -> reference) -> CETS (reference -> particle)
+        pose = np.linalg.inv(scipion_matrix)
+        # Shifts converted from pixels to Å (physical frame).
+        translation_vector = (pose[:3, 3] * pixel_size).tolist()
+        angular_matrix = pose[:3, :3].tolist()
         return (
+            Affine(name=f"{name} orientation", affine=angular_matrix),
             Translation(
                 name="Particle Translation, in angstroms",
                 translation=translation_vector,
             ),
-            Affine(name=f"{name} orientation", affine=angular_matrix),
         )

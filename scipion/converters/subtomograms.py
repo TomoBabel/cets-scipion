@@ -142,7 +142,9 @@ class ScipionSetOfSubtomogras(BaseConverter):
                             row, coord_set_class_dict, SUBTOMO_TRANSFORM_MATRIX
                         )
                     )
-                    subtomo_tr, subtomo_rot = self._gen_subvolume_transforms(
+                    # Pose reference -> particle: rotation first, then translation
+                    # (Scipion stores the inverse; see _gen_subvolume_transforms).
+                    subtomo_rot, subtomo_tr = self._gen_subvolume_transforms(
                         subtomo_euler_matrix,
                         is_coordinate=False,
                         pixel_size=voxel_size,
@@ -195,8 +197,8 @@ class ScipionSetOfSubtomogras(BaseConverter):
                             coordinate_systems=[array_cs, physical_cs],
                             coordinate_transformations=[
                                 array_to_physical,
-                                subtomo_tr,
                                 subtomo_rot,
+                                subtomo_tr,
                             ],
                         )
                     )
