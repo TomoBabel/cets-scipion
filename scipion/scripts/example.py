@@ -54,7 +54,7 @@ sci_coords_set = ScipionSetOfCoordinates3D(coords_db_path)
 for tomo in tomo_md_list or []:
     tomo_id = tomo.tilt_series_id
     point_set = sci_coords_set.scipion_to_cets(
-        tomo_id, pixel_size=tomo_voxel_size(tomo)
+        tomo_id, tomo_db_path, pixel_size=tomo_voxel_size(tomo)
     )
     if point_set is not None:
         write_coords_set_yaml(point_set, tomo_id, Path(scratch_dir))
@@ -67,7 +67,7 @@ sci_subtomo_set = ScipionSetOfSubtomogras(subtomo_db_path)
 for tomo in tomo_md_list or []:
     tomo_id = tomo.tilt_series_id
     result = sci_subtomo_set.scipion_to_cets(
-        tomo_id, coords_pixel_size=tomo_voxel_size(tomo)
+        tomo_id, coords_pixel_size=tomo_voxel_size(tomo), tomo_db_path=tomo_db_path
     )
     if result is not None:
         subtomo_point_set, average = result

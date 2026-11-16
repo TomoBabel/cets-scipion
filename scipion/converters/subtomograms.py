@@ -1,5 +1,6 @@
 import ast
-from typing import Tuple
+import os
+from typing import Dict, List, Tuple
 
 from cets_data_model.models.models import (
     PointSet3D,
@@ -17,6 +18,7 @@ from scipion.constants import (
     SUBTOMO_Y,
     SUBTOMO_Z,
     SUBTOMO_TRANSFORM_MATRIX,
+    SUBTOMO_VOL_NAME,
 )
 from scipion.converters.base_converter import BaseConverter
 from scipion.utils.utils_sqlite import connect_db, map_classes_table, get_row_value
@@ -27,6 +29,7 @@ class ScipionSetOfSubtomogras(BaseConverter):
         self,
         tomo_id: str,
         coords_pixel_size: float | None = None,
+        tomo_db_path: os.PathLike | None = None,
         # out_directory: str | None = None
     ) -> Tuple[PointSet3D, Average] | None:
         """Converts a set of subtomograms in Scipion sqlite format corresponding to the
@@ -49,6 +52,10 @@ class ScipionSetOfSubtomogras(BaseConverter):
         ``Dataset`` (an ``Average`` is not standalone: the referenced region/annotation must be
         resolvable in the same dataset).
 
+        Scipion stores the picked coordinates referred to the origin of their tomogram (by
+        default, its center). They are converted here to the array (voxel) coordinate
+        system of the tomogram, whose origin is its corner.
+
         :param tomo_id: Scipion tomogram identifier. It is used to indicate the tomogram from which the
         subtomograms will be converted, as in Scipion the subtomograms from all the tomograms are
         stored together.
@@ -64,6 +71,13 @@ class ScipionSetOfSubtomogras(BaseConverter):
         When omitted, only the array coordinate system is attached and
         ``coordinate_transformations`` is left empty.
         :type coords_pixel_size: float, optional. Defaults to None.
+
+        :param tomo_db_path: sqlite file of the Scipion SetOfTomograms the particles were
+        picked in. The origin and the sampling rate of the tomogram are read from it to
+        refer the coordinates to the corner of the tomogram. When omitted, the origin is
+        assumed to be the center of the tomogram each subtomogram points to (``_volName``),
+        which is Scipion's default.
+        :type tomo_db_path: os.PathLike, optional. Defaults to None.
         """
         db_connection = connect_db(self.db_path)
         if db_connection is not None:
@@ -90,7 +104,17 @@ class ScipionSetOfSubtomogras(BaseConverter):
 
                 origin_3d = []
                 particle_maps = []
-                for coord_index, row in enumerate(cursor):
+                rows = cursor.fetchall()
+                # Vector to refer the coordinates to the corner of the tomogram: read
+                # from the tomograms sqlite or, by default, the center of each
+                # subtomogram's source tomogram (cached per tomogram file).
+                db_corner_offset = (
+                    self._get_tomo_corner_offset(tomo_db_path, tomo_id)
+                    if tomo_db_path and rows
+                    else None
+                )
+                tomo_centers: Dict[str, List[float]] = {}
+                for coord_index, row in enumerate(rows):
                     subtomo_fn = get_row_value(row, coord_set_class_dict, FILE_NAME)
                     subtomo_fn = (
                         self.scipion_prj_path / subtomo_fn
@@ -131,12 +155,31 @@ class ScipionSetOfSubtomogras(BaseConverter):
                     # TODO (open question #1): the coordinate Euler orientation
                     # (SUBTOMO_COORD_MATRIX) has no home on PointSet3D. It is dropped here;
                     # revisit if per-point orientation of the picked coordinate must be kept.
+                    if db_corner_offset is not None:
+                        corner_offset = db_corner_offset
+                    else:
+                        vol_name = get_row_value(
+                            row, coord_set_class_dict, SUBTOMO_VOL_NAME
+                        )
+                        if not vol_name:
+                            raise ValueError(
+                                f"The subtomograms of [{tomo_id}] do not store their "
+                                f"source tomogram. Please provide tomo_db_path."
+                            )
+                        if vol_name not in tomo_centers:
+                            tomo_centers[vol_name] = self._get_tomo_center(
+                                self.scipion_prj_path / vol_name
+                            )
+                        corner_offset = tomo_centers[vol_name]
                     origin_3d.append(
-                        [
-                            get_row_value(row, coord_set_class_dict, SUBTOMO_X),
-                            get_row_value(row, coord_set_class_dict, SUBTOMO_Y),
-                            get_row_value(row, coord_set_class_dict, SUBTOMO_Z),
-                        ]
+                        self._to_tomo_corner(
+                            [
+                                get_row_value(row, coord_set_class_dict, SUBTOMO_X),
+                                get_row_value(row, coord_set_class_dict, SUBTOMO_Y),
+                                get_row_value(row, coord_set_class_dict, SUBTOMO_Z),
+                            ],
+                            corner_offset,
+                        )
                     )
                     particle_maps.append(
                         ParticleMap(

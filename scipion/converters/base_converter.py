@@ -1,3 +1,4 @@
+import ast
 import os
 from pathlib import Path
 from typing import Dict, List, Any, Tuple
@@ -11,7 +12,21 @@ from cets_data_model.models.models import (
     AxisType,
     AxisUnit,
 )
+from cets_data_model.utils.image_utils import get_mrc_info
+from scipion.constants import (
+    FILE_NAME,
+    OBJECTS_TBL,
+    ORIGIN_MATRIX,
+    SAMPLING_RATE,
+    TOMO_ORIGIN_FIELDS,
+    TS_ID,
+)
 from scipion.utils.utils import validate_file
+from scipion.utils.utils_sqlite import connect_db, map_classes_table, get_row_value
+
+# Decimals kept in the coordinates referred to the corner of the tomogram: enough for
+# any sub-voxel position, while removing the floating point noise of the change of origin.
+COORD_DECIMALS = 6
 
 
 class BaseConverter:
@@ -32,6 +47,63 @@ class BaseConverter:
         # Move to the original working dir
         os.chdir(orig_dir)
         return Path(prj_path)
+
+    def _get_tomo_corner_offset(
+        self, tomo_db_path: os.PathLike, tomo_id: str
+    ) -> List[float]:
+        """Scipion stores the coordinates referred to the origin of their tomogram (by
+        default, its center), in voxels. This method returns the vector (x, y, z), in
+        voxels, that must be added to them to refer them to the corner of the tomogram,
+        that is, to its array coordinate system. It is the same operation Scipion does
+        (``Coordinate3D.getPosition(BOTTOM_LEFT_CORNER)``): minus the shifts of the
+        origin of the tomogram (Å) divided by its sampling rate. If the tomogram has no
+        origin stored, Scipion's default one (the center of the tomogram) is used.
+
+        :param tomo_db_path: sqlite file of the Scipion SetOfTomograms containing the
+        tomogram the coordinates are referred to.
+        :param tomo_id: Scipion tomogram identifier (tsId).
+        """
+        tomo_db = validate_file(tomo_db_path, ".sqlite")
+        conn = connect_db(tomo_db)
+        if conn is None:
+            raise Exception(f"Unable to read the tomograms from {tomo_db}")
+        try:
+            class_dict = map_classes_table(conn)
+            sql_fields = self._get_sql_fields(class_dict, TOMO_ORIGIN_FIELDS)
+            cursor = conn.cursor()
+            cursor.execute(
+                f'SELECT {sql_fields} FROM "{OBJECTS_TBL}" WHERE "{class_dict[TS_ID]}"=?',
+                (tomo_id,),
+            )
+            row = cursor.fetchone()
+        finally:
+            conn.close()
+        if row is None:
+            raise ValueError(f"The tomogram [{tomo_id}] was not found in {tomo_db}")
+        origin_matrix = get_row_value(row, class_dict, ORIGIN_MATRIX)
+        sampling_rate = get_row_value(row, class_dict, SAMPLING_RATE)
+        if origin_matrix and origin_matrix != "None" and sampling_rate:
+            matrix = ast.literal_eval(origin_matrix)
+            return [-float(matrix[i][3]) / float(sampling_rate) for i in range(3)]
+        # PathToScipionUserData/projects/ProjectName/Runs/ProtocolDir/sqlite
+        tomo_prj_path = tomo_db.parents[2]
+        return self._get_tomo_center(
+            tomo_prj_path / get_row_value(row, class_dict, FILE_NAME)
+        )
+
+    @staticmethod
+    def _get_tomo_center(tomo_file: os.PathLike) -> List[float]:
+        """Center of a tomogram (x, y, z), in voxels: Scipion's default origin."""
+        img_info = get_mrc_info(tomo_file)
+        return [img_info.size_x / 2, img_info.size_y / 2, img_info.size_z / 2]
+
+    @staticmethod
+    def _to_tomo_corner(coords: List[Any], corner_offset: List[float]) -> List[float]:
+        """Refers a Scipion coordinate (x, y, z) to the corner of its tomogram."""
+        return [
+            round(float(coord) + offset, COORD_DECIMALS)
+            for coord, offset in zip(coords, corner_offset)
+        ]
 
     @staticmethod
     def _get_sql_fields(mapped_class_dict: Dict[str, str], fields: List[str]) -> str:

@@ -61,6 +61,11 @@ ODD_EVEN_TOMOS_FN = "_halfMapFilenames"
 
 TOMOGRAM_FIELDS = [TS_ID, FILE_NAME, CTF_CORRECTED, ODD_EVEN_TOMOS_FN]
 
+# Fields used to refer the coordinates to the corner of the tomogram
+SAMPLING_RATE = "_samplingRate"
+ORIGIN_MATRIX = "_origin._matrix"
+TOMO_ORIGIN_FIELDS = [TS_ID, FILE_NAME, SAMPLING_RATE, ORIGIN_MATRIX]
+
 # COORDINATES 3D #####################################
 COORD_X = "_x"
 COORD_Y = "_y"
@@ -80,6 +85,7 @@ SUBTOMO_Z = "_coordinate._z"
 SUBTOMO_COORD_MATRIX = "_coordinate._eulerMatrix._matrix"
 SUBTOMO_TRANSFORM_MATRIX = "_transform._matrix"
 SUBTOMO_ID = "_coordinate._tomoId"
+SUBTOMO_VOL_NAME = "_volName"
 
 SUBTOMO_FIELDS = [
     FILE_NAME,
@@ -89,4 +95,5 @@ SUBTOMO_FIELDS = [
     SUBTOMO_COORD_MATRIX,
     SUBTOMO_TRANSFORM_MATRIX,
     SUBTOMO_ID,
+    SUBTOMO_VOL_NAME,
 ]

@@ -139,7 +139,13 @@ class ScipionSetOfTiltSeries(BaseConverter):
                     tilt_images_table_name = self._get_ts_obj_tbl_name(ts_id)
                     query = f'SELECT {ti_sql_fields} FROM "{tilt_images_table_name}"'
                     cursor.execute(query)  # execute the query
-                    for row in cursor.fetchall():
+                    rows = cursor.fetchall()
+                    if ctf_md_list is not None and len(ctf_md_list) != len(rows):
+                        raise ValueError(
+                            f"tsId = {ts_id}. The number of CTFs [{len(ctf_md_list)}] "
+                            f"is different than the number of tilt-images [{len(rows)}]."
+                        )
+                    for ti_index, row in enumerate(rows):
                         # Build the Instrument / AcquisitionSession once (values are the
                         # same for every image in the set).
                         if instrument is None:
@@ -149,7 +155,7 @@ class ScipionSetOfTiltSeries(BaseConverter):
                         ti, projection_alignment, odd_fn, even_fn = (
                             self._ti_from_sqlite_row(row, ts_class_dict)
                         )
-                        self._add_ctf_md(ti, i, ctf_md_list)
+                        self._add_ctf_md(ti, ti_index, ctf_md_list)
                         ti_list.append(ti)
                         # One ProjectionAlignment per projection (index-aligned with ti_list).
                         projection_alignments.append(projection_alignment)

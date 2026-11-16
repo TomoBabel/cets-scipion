@@ -1,3 +1,5 @@
+import os
+
 from cets_data_model.models.models import (
     PointSet3D,
     AnnotationType,
@@ -19,6 +21,7 @@ class ScipionSetOfCoordinates3D(BaseConverter):
     def scipion_to_cets(
         self,
         tomo_id: str,
+        tomo_db_path: os.PathLike,
         pixel_size: float | None = None,
         # out_directory: str | None = None
     ) -> PointSet3D | None:
@@ -37,10 +40,20 @@ class ScipionSetOfCoordinates3D(BaseConverter):
         one ``PointSet3D`` per tomogram (matching the "one PointSet3D per tomogram" decision
         baked into the model, where ``source_tomogram_id`` sits on the annotation).
 
+        Scipion stores the coordinates referred to the origin of their tomogram (by
+        default, its center). They are converted here to the array (voxel) coordinate
+        system of the tomogram, whose origin is its corner, which is what the
+        ``{tomo_id}_array`` coordinate system of the ``PointSet3D`` states.
+
         :param tomo_id: Scipion tomogram identifier. It is used to indicate the tomogram from which the
         coordinates will be converted, as in Scipion the coordinates from all the tomograms are
         stored together.
         :type tomo_id: str.
+
+        :param tomo_db_path: sqlite file of the Scipion SetOfTomograms the coordinates were
+        picked in. The origin and the sampling rate of the tomogram are read from it to
+        refer the coordinates to the corner of the tomogram.
+        :type tomo_db_path: os.PathLike.
 
         :param pixel_size: voxel size (Å) of the tomogram these coordinates were picked in.
         When provided, the returned ``PointSet3D`` also carries the physical (Å) coordinate
@@ -66,9 +79,13 @@ class ScipionSetOfCoordinates3D(BaseConverter):
                 tomo_id_col_name = coord_set_class_dict[TOMO_ID]
                 query = f'SELECT {coord_sql_fields} FROM "{OBJECTS_TBL}" WHERE {tomo_id_col_name}="{tomo_id}"'
                 cursor.execute(query)  # execute the query
+                rows = cursor.fetchall()
+                if not rows:
+                    return None
+                corner_offset = self._get_tomo_corner_offset(tomo_db_path, tomo_id)
                 origin_3d = []
                 scores = []
-                for row in cursor:
+                for row in rows:
                     # TODO (open question #1): the per-coordinate Euler orientation
                     # (EULER_MATRIX) cannot be stored on a PointSet3D, which only carries
                     # positions (origin3D) plus set-level transforms. If per-point
@@ -76,15 +93,16 @@ class ScipionSetOfCoordinates3D(BaseConverter):
                     # PointVectorSet3D / PointMatrixSet3D instead. For now only the
                     # positions are converted.
                     origin_3d.append(
-                        [
-                            get_row_value(row, coord_set_class_dict, COORD_X),
-                            get_row_value(row, coord_set_class_dict, COORD_Y),
-                            get_row_value(row, coord_set_class_dict, COORD_Z),
-                        ]
+                        self._to_tomo_corner(
+                            [
+                                get_row_value(row, coord_set_class_dict, COORD_X),
+                                get_row_value(row, coord_set_class_dict, COORD_Y),
+                                get_row_value(row, coord_set_class_dict, COORD_Z),
+                            ],
+                            corner_offset,
+                        )
                     )
                     scores.append(get_row_value(row, coord_set_class_dict, COORD_SCORE))
-                if not origin_3d:
-                    return None
                 # The scores are only converted if every coordinate has one (older sets
                 # may not have the _score column), as they must be aligned with origin3D.
                 has_scores = all(score is not None for score in scores)
