@@ -12,7 +12,6 @@ from cets_data_model.models.models import (
     Affine,
     Matrix3x3,
     TiltSeries,
-    CTFMetadata,
     ProjectionAlignment,
     Alignment,
     Instrument,
@@ -38,6 +37,7 @@ from scipion.constants import (
     OBJECTS_TBL,
 )
 from scipion.converters.base_converter import BaseConverter
+from scipion.converters.ctf_set import ScipionCtfTomo
 from scipion.utils.utils import (
     write_ts_set_yaml,
     write_alignment_set_yaml,
@@ -62,7 +62,7 @@ class ScipionSetOfTiltSeries(BaseConverter):
 
     def scipion_to_cets(
         self,
-        ctf_md: Dict[str, List[CTFMetadata]] | None = None,
+        ctf_md: Dict[str, List[ScipionCtfTomo]] | None = None,
         out_directory: str | None = None,
     ) -> (
         Tuple[
@@ -95,11 +95,12 @@ class ScipionSetOfTiltSeries(BaseConverter):
         ``acquisition_session_id``. Both are returned as the 3rd and 4th elements for
         higher-level assembly onto ``Dataset.instruments`` / ``Dataset.acquisition_sessions``.
 
-        :param ctf_md: dictionary of type key: tilt-series id, value: list of CTF Metadata
-        containing the CTFMetadata of corresponding to all the tilt-images that compose the tilt-series
-        of id equal to the key of the dictionary. It can be obtained using the method
-        ScipionCtfSeries.scipion_to_cets.
-        :type ctf_md: Dict[str, List[CTFMetadata]] or None, optional, Defaults to None
+        :param ctf_md: dictionary of type key: tilt-series id, value: list of the CTFs of the
+        tilt-images of that tilt-series, as returned by ScipionSetOfCtf.scipion_to_cets. Each
+        CTF is assigned to its tilt-image as Scipion does (CTFTomoSeries.getCtfTomoFromTi): by
+        acquisition order or, if it is not stored, by index. A tilt-image with no CTF keeps
+        ctf_metadata empty.
+        :type ctf_md: Dict[str, List[ScipionCtfTomo]] or None, optional, Defaults to None
 
         :param out_directory: name of the directory in which the tilt-series
         .yaml files (one per tilt-series) will be written.
@@ -141,12 +142,7 @@ class ScipionSetOfTiltSeries(BaseConverter):
                     query = f'SELECT {ti_sql_fields} FROM "{tilt_images_table_name}"'
                     cursor.execute(query)  # execute the query
                     rows = cursor.fetchall()
-                    if ctf_md_list is not None and len(ctf_md_list) != len(rows):
-                        raise ValueError(
-                            f"tsId = {ts_id}. The number of CTFs [{len(ctf_md_list)}] "
-                            f"is different than the number of tilt-images [{len(rows)}]."
-                        )
-                    for ti_index, row in enumerate(rows):
+                    for row in rows:
                         # Build the Instrument / AcquisitionSession once (values are the
                         # same for every image in the set).
                         if instrument is None:
@@ -156,7 +152,7 @@ class ScipionSetOfTiltSeries(BaseConverter):
                         ti, projection_alignment, odd_fn, even_fn = (
                             self._ti_from_sqlite_row(row, ts_class_dict)
                         )
-                        self._add_ctf_md(ti, ti_index, ctf_md_list)
+                        self._add_ctf_md(ti, row, ts_class_dict, ctf_md_list)
                         ti_list.append(ti)
                         # One ProjectionAlignment per projection (index-aligned with ti_list).
                         projection_alignments.append(projection_alignment)
@@ -225,11 +221,17 @@ class ScipionSetOfTiltSeries(BaseConverter):
         odd_even_fn = get_row_value(row, ts_class_dict, ODD_EVEN_FN)
         if odd_even_fn:
             even_fn, odd_fn = sorted(odd_even_fn.split(","))
-        # Get the transformation matrix
+        # Get the transformation matrix. Tilt-series that have not been aligned (e.g. just
+        # imported) do not store it: their alignment is the identity (no rotation, no shift).
         tr_matrix_str = get_row_value(row, ts_class_dict, TRANSFORMATION_MATRIX)
-        tr_matrix = np.array(ast.literal_eval(tr_matrix_str))
+        tr_matrix = (
+            np.array(ast.literal_eval(tr_matrix_str))
+            if tr_matrix_str and tr_matrix_str != "None"
+            else np.eye(3)
+        )
         ts_id = get_row_value(row, ts_class_dict, TS_ID)
-        section = int(get_row_value(row, ts_class_dict, INDEX))
+        # Scipion's index of the image in the stack is 1-based; CETS sections are 0-based.
+        section = int(get_row_value(row, ts_class_dict, INDEX)) - 1
         # Unique tilt-image id within the tilt-series (derived from the ts id + section).
         tilt_image_id = f"{ts_id}_{section}"
 
@@ -342,8 +344,38 @@ class ScipionSetOfTiltSeries(BaseConverter):
         return Affine(affine=affine_matrix)
 
     @staticmethod
-    def _add_ctf_md(ti: TiltImage, index: int, ctf_md: List[CTFMetadata] | None = None):
-        ti.ctf_metadata = ctf_md[index] if ctf_md else None
+    def _add_ctf_md(
+        ti: TiltImage,
+        row: sqlite3.Row,
+        ts_class_dict: Dict[str, str],
+        ctf_md: List[ScipionCtfTomo] | None = None,
+    ) -> None:
+        """Assigns its CTF to a tilt-image as Scipion does (CTFTomoSeries.getCtfTomoFromTi):
+        the one with the same acquisition order or, if the CTFs do not store it, the one
+        with the same index. The position in the list is not used: a CTF series may not
+        follow the order of the tilt-series or lack some of its tilt-images."""
+        ti.ctf_metadata = None
+        if not ctf_md:
+            return
+        acq_order = get_row_value(row, ts_class_dict, ACQUISITION_ORDER)
+        index = get_row_value(row, ts_class_dict, INDEX)
+        if acq_order is not None and all(c.acq_order is not None for c in ctf_md):
+            matches = [c for c in ctf_md if c.acq_order == int(acq_order)]
+        elif index is not None and all(c.index is not None for c in ctf_md):
+            matches = [c for c in ctf_md if c.index == int(index)]
+        else:
+            raise ValueError(
+                f"tsId = {get_row_value(row, ts_class_dict, TS_ID)}. The CTFs cannot be "
+                f"matched with the tilt-images: neither the acquisition order nor the "
+                f"index is stored in both."
+            )
+        if len(matches) > 1:
+            raise ValueError(
+                f"tsId = {get_row_value(row, ts_class_dict, TS_ID)}. Several CTFs match "
+                f"the tilt-image of index {index} (acquisition order {acq_order})."
+            )
+        if matches:
+            ti.ctf_metadata = matches[0].ctf
 
     @staticmethod
     def _build_acquisition(

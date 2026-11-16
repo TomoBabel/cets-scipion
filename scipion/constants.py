@@ -8,6 +8,9 @@ LABEL_PROPERTY = "label_property"
 COLUMN_NAME = "column_name"
 PROP_KEY = "key"
 PROP_VALUE = "value"
+# Object id column of the Objects tables (not mapped in the Classes table). The items of a
+# nested set (e.g. the CTFs of a CTFTomoSeries) are stored in the tables id<objId>_*.
+OBJ_ID = "id"
 
 # TILT-SERIES ##########################################
 # Field names
