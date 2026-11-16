@@ -1,8 +1,9 @@
 import ast
 import os
 import sqlite3
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Protocol, Sequence, TypeVar
 
 import numpy as np
 
@@ -39,6 +40,7 @@ from scipion.constants import (
 from scipion.converters.base_converter import BaseConverter
 from scipion.converters.ctf_set import ScipionCtfTomo
 from scipion.utils.utils import (
+    validate_file,
     write_ts_set_yaml,
     write_alignment_set_yaml,
     write_instruments_yaml,
@@ -49,6 +51,24 @@ from scipion.utils.utils_sqlite import (
     get_from_obj_tbl,
     get_row_value,
 )
+
+
+@dataclass
+class ScipionTiltAngle:
+    """Tilt angle of a tilt-image of a Scipion tilt-series, with the acquisition order and
+    index (1-based) that identify the tilt-image."""
+
+    angle: Optional[float]
+    acq_order: Optional[int] = None
+    index: Optional[int] = None
+
+
+class _HasAcqOrderAndIndex(Protocol):
+    acq_order: Optional[int]
+    index: Optional[int]
+
+
+_Matchable = TypeVar("_Matchable", bound=_HasAcqOrderAndIndex)
 
 
 class ScipionSetOfTiltSeries(BaseConverter):
@@ -64,6 +84,7 @@ class ScipionSetOfTiltSeries(BaseConverter):
         self,
         ctf_md: Dict[str, List[ScipionCtfTomo]] | None = None,
         out_directory: str | None = None,
+        nominal_ts_db_path: os.PathLike | None = None,
     ) -> (
         Tuple[
             List[TiltSeries],
@@ -105,7 +126,24 @@ class ScipionSetOfTiltSeries(BaseConverter):
         :param out_directory: name of the directory in which the tilt-series
         .yaml files (one per tilt-series) will be written.
         :type out_directory: pathlib.Path or str, optional, Defaults to None
+
+        :param nominal_ts_db_path: sqlite file of the Scipion SetOfTiltSeries before the
+        alignment (e.g. the imported one), to read the nominal tilt angles from.
+
+        Scipion stores a single tilt angle per tilt-image (``_tiltAngle``), which the
+        alignment protocols overwrite with the refined one. So, for the tilt-images that are
+        aligned (they store a transformation matrix), it is stored as the
+        ``refined_tilt_angle`` of their ``ProjectionAlignment``, and their
+        ``nominal_tilt_angle`` is read from ``nominal_ts_db_path`` (matched by acquisition
+        order or index), or left empty if it is not given. For the tilt-images that are not
+        aligned, it is the ``nominal_tilt_angle``.
+        :type nominal_ts_db_path: os.PathLike, optional, Defaults to None
         """
+        nominal_angles = (
+            self._load_nominal_tilt_angles(nominal_ts_db_path)
+            if nominal_ts_db_path
+            else None
+        )
         db_connection = connect_db(self.db_path)
         if db_connection is not None:
             with db_connection as conn:
@@ -142,6 +180,16 @@ class ScipionSetOfTiltSeries(BaseConverter):
                     query = f'SELECT {ti_sql_fields} FROM "{tilt_images_table_name}"'
                     cursor.execute(query)  # execute the query
                     rows = cursor.fetchall()
+                    nominal_list = (
+                        nominal_angles.get(ts_id)
+                        if nominal_angles is not None
+                        else None
+                    )
+                    if nominal_angles is not None and nominal_list is None:
+                        raise ValueError(
+                            f"tsId = {ts_id}. It is not in the tilt-series set "
+                            f"{nominal_ts_db_path}, given to read the nominal tilt angles."
+                        )
                     for row in rows:
                         # Build the Instrument / AcquisitionSession once (values are the
                         # same for every image in the set).
@@ -150,12 +198,20 @@ class ScipionSetOfTiltSeries(BaseConverter):
                                 row, ts_class_dict
                             )
                         ti, projection_alignment, odd_fn, even_fn = (
-                            self._ti_from_sqlite_row(row, ts_class_dict)
+                            self._ti_from_sqlite_row(row, ts_class_dict, nominal_list)
                         )
                         self._add_ctf_md(ti, row, ts_class_dict, ctf_md_list)
                         ti_list.append(ti)
                         # One ProjectionAlignment per projection (index-aligned with ti_list).
                         projection_alignments.append(projection_alignment)
+                    if nominal_list is None and any(
+                        ti.nominal_tilt_angle is None for ti in ti_list
+                    ):
+                        print(
+                            f"tsId = {ts_id}. The tilt-series is aligned, so its tilt "
+                            f"angles are stored as refined. Its nominal tilt angles are "
+                            f"left empty: provide nominal_ts_db_path to read them."
+                        )
 
                     # Tilt-series
                     ts = TiltSeries(
@@ -206,6 +262,7 @@ class ScipionSetOfTiltSeries(BaseConverter):
         self,
         row: sqlite3.Row,
         ts_class_dict: Dict[str, str],
+        nominal_list: List[ScipionTiltAngle] | None = None,
     ) -> Tuple[TiltImage, ProjectionAlignment, Optional[str], Optional[str]]:
         # Read image info
         ts_file = get_row_value(row, ts_class_dict, FILE_NAME)
@@ -224,12 +281,29 @@ class ScipionSetOfTiltSeries(BaseConverter):
         # Get the transformation matrix. Tilt-series that have not been aligned (e.g. just
         # imported) do not store it: their alignment is the identity (no rotation, no shift).
         tr_matrix_str = get_row_value(row, ts_class_dict, TRANSFORMATION_MATRIX)
+        is_aligned = bool(tr_matrix_str) and tr_matrix_str != "None"
         tr_matrix = (
-            np.array(ast.literal_eval(tr_matrix_str))
-            if tr_matrix_str and tr_matrix_str != "None"
-            else np.eye(3)
+            np.array(ast.literal_eval(tr_matrix_str)) if is_aligned else np.eye(3)
         )
         ts_id = get_row_value(row, ts_class_dict, TS_ID)
+        # Scipion's only tilt angle is the refined one once the tilt-series is aligned
+        tilt_angle = get_row_value(row, ts_class_dict, TILT_ANGLE)
+        if is_aligned:
+            refined_tilt_angle = tilt_angle
+            nominal_tilt_angle = None
+            if nominal_list is not None:
+                nominal = self._match_by_acq_order_or_index(
+                    row, ts_class_dict, nominal_list, "nominal tilt angles"
+                )
+                if nominal is None:
+                    raise ValueError(
+                        f"tsId = {ts_id}. No nominal tilt angle matches the tilt-image "
+                        f"of index {get_row_value(row, ts_class_dict, INDEX)}."
+                    )
+                nominal_tilt_angle = nominal.angle
+        else:
+            refined_tilt_angle = None
+            nominal_tilt_angle = tilt_angle
         # Scipion's index of the image in the stack is 1-based; CETS sections are 0-based.
         section = int(get_row_value(row, ts_class_dict, INDEX)) - 1
         # Unique tilt-image id within the tilt-series (derived from the ts id + section).
@@ -254,7 +328,7 @@ class ScipionSetOfTiltSeries(BaseConverter):
             # map it straight to the CETS field instead of re-deriving it from the dose.
             acquisition_order=get_row_value(row, ts_class_dict, ACQUISITION_ORDER),
             section=section,
-            nominal_tilt_angle=get_row_value(row, ts_class_dict, TILT_ANGLE),
+            nominal_tilt_angle=nominal_tilt_angle,
             accumulated_dose=get_row_value(row, ts_class_dict, ACCUMULATED_DOSE),
             # Microscope/session acquisition constants no longer live on the tilt-image;
             # they are emitted as Instrument / AcquisitionSession (see _build_acquisition).
@@ -274,7 +348,55 @@ class ScipionSetOfTiltSeries(BaseConverter):
             output_cs=f"tilt_series_{ts_id}_physical",
             section=section,
         )
+        projection_alignment.refined_tilt_angle = refined_tilt_angle
         return ti, projection_alignment, odd_fn, even_fn
+
+    def _load_nominal_tilt_angles(
+        self, ts_db_path: os.PathLike
+    ) -> Dict[str, List[ScipionTiltAngle]]:
+        """Tilt angles of each tilt-series of a Scipion SetOfTiltSeries that has not been
+        aligned, with the acquisition order and index to match them with the tilt-images.
+
+        :param ts_db_path: sqlite file of the SetOfTiltSeries.
+        """
+        ts_db = validate_file(ts_db_path, ".sqlite")
+        conn = connect_db(ts_db)
+        if conn is None:
+            raise Exception(f"Unable to read the tilt-series from {ts_db}")
+        fields = [TS_ID, INDEX, ACQUISITION_ORDER, TILT_ANGLE, TRANSFORMATION_MATRIX]
+        angles: Dict[str, List[ScipionTiltAngle]] = {}
+        try:
+            ts_ids = get_from_obj_tbl(conn, TS_ID, map_classes_table(conn))
+            cursor = conn.cursor()
+            for ts_id in ts_ids:
+                class_dict = map_classes_table(
+                    conn, self._get_ts_classes_tbl_name(ts_id)
+                )
+                cursor.execute(
+                    f"SELECT {self._get_sql_fields(class_dict, fields)} "
+                    f'FROM "{self._get_ts_obj_tbl_name(ts_id)}"'
+                )
+                ts_angles = []
+                for row in cursor.fetchall():
+                    matrix = get_row_value(row, class_dict, TRANSFORMATION_MATRIX)
+                    if matrix and matrix != "None":
+                        raise ValueError(
+                            f"tsId = {ts_id}. The tilt-series of {ts_db} are aligned, so "
+                            f"their tilt angles may be refined, not nominal."
+                        )
+                    acq_order = get_row_value(row, class_dict, ACQUISITION_ORDER)
+                    index = get_row_value(row, class_dict, INDEX)
+                    ts_angles.append(
+                        ScipionTiltAngle(
+                            angle=get_row_value(row, class_dict, TILT_ANGLE),
+                            acq_order=int(acq_order) if acq_order is not None else None,
+                            index=int(index) if index is not None else None,
+                        )
+                    )
+                angles[ts_id] = ts_angles
+        finally:
+            conn.close()
+        return angles
 
     @staticmethod
     def _get_ts_classes_tbl_name(ts_id: str) -> str:
@@ -357,25 +479,44 @@ class ScipionSetOfTiltSeries(BaseConverter):
         ti.ctf_metadata = None
         if not ctf_md:
             return
+        match = ScipionSetOfTiltSeries._match_by_acq_order_or_index(
+            row, ts_class_dict, ctf_md, "CTFs"
+        )
+        if match is not None:
+            ti.ctf_metadata = match.ctf
+
+    @staticmethod
+    def _match_by_acq_order_or_index(
+        row: sqlite3.Row,
+        ts_class_dict: Dict[str, str],
+        items: Sequence[_Matchable],
+        description: str,
+    ) -> Optional[_Matchable]:
+        """Item of ``items`` that corresponds to the tilt-image of ``row``, matched as
+        Scipion does (CTFTomoSeries.getCtfTomoFromTi): by acquisition order or, if it is
+        not stored in both, by index. None if no item matches.
+
+        :param description: what the items are, for the error messages.
+        """
+        ts_id = get_row_value(row, ts_class_dict, TS_ID)
         acq_order = get_row_value(row, ts_class_dict, ACQUISITION_ORDER)
         index = get_row_value(row, ts_class_dict, INDEX)
-        if acq_order is not None and all(c.acq_order is not None for c in ctf_md):
-            matches = [c for c in ctf_md if c.acq_order == int(acq_order)]
-        elif index is not None and all(c.index is not None for c in ctf_md):
-            matches = [c for c in ctf_md if c.index == int(index)]
+        if acq_order is not None and all(i.acq_order is not None for i in items):
+            matches = [i for i in items if i.acq_order == int(acq_order)]
+        elif index is not None and all(i.index is not None for i in items):
+            matches = [i for i in items if i.index == int(index)]
         else:
             raise ValueError(
-                f"tsId = {get_row_value(row, ts_class_dict, TS_ID)}. The CTFs cannot be "
-                f"matched with the tilt-images: neither the acquisition order nor the "
-                f"index is stored in both."
+                f"tsId = {ts_id}. The {description} cannot be matched with the "
+                f"tilt-images: neither the acquisition order nor the index is stored in "
+                f"both."
             )
         if len(matches) > 1:
             raise ValueError(
-                f"tsId = {get_row_value(row, ts_class_dict, TS_ID)}. Several CTFs match "
-                f"the tilt-image of index {index} (acquisition order {acq_order})."
+                f"tsId = {ts_id}. Several {description} match the tilt-image of index "
+                f"{index} (acquisition order {acq_order})."
             )
-        if matches:
-            ti.ctf_metadata = matches[0].ctf
+        return matches[0] if matches else None
 
     @staticmethod
     def _build_acquisition(
