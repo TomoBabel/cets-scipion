@@ -29,6 +29,7 @@ from scipion.constants import (
     VOLTAGE,
     SPHERICAL_ABERRATION,
     AMPLITUDE_CONTRAST,
+    TILT_AXIS_ANGLE,
     ACQUISITION_ORDER,
     TRANSFORMATION_MATRIX,
     ODD_EVEN_FN,
@@ -351,8 +352,10 @@ class ScipionSetOfTiltSeries(BaseConverter):
         """Builds the dataset-level Instrument and AcquisitionSession from a Scipion
         acquisition row.
 
-        ``voltage`` is a physical instrument property; ``spherical_aberration`` and
-        ``amplitude_contrast`` are kept at the session level. ``get_row_value`` returns None
+        ``voltage`` is a physical instrument property; ``spherical_aberration``,
+        ``amplitude_contrast`` and ``tilt_axis_angle`` (degrees, relative to the detector
+        x-axis, as in Scipion's ``TomoAcquisition``) are kept at the session level.
+        ``get_row_value`` returns None
         when a column is absent, so older sqlite files still work. ``dose_rate`` is
         intentionally left unset: Scipion stores dose-per-frame (e-/A^2), not a per-second
         rate (e-/A^2/s) as CETS ``dose_rate`` expects.
@@ -368,5 +371,6 @@ class ScipionSetOfTiltSeries(BaseConverter):
             spherical_aberration=get_row_value(
                 row, ts_class_dict, SPHERICAL_ABERRATION
             ),
+            tilt_axis_angle=get_row_value(row, ts_class_dict, TILT_AXIS_ANGLE),
         )
         return instrument, acquisition_session

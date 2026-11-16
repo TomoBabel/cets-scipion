@@ -23,6 +23,8 @@ ACCUMULATED_DOSE = "_acquisition._accumDose"
 VOLTAGE = "_acquisition._voltage"
 SPHERICAL_ABERRATION = "_acquisition._sphericalAberration"
 AMPLITUDE_CONTRAST = "_acquisition._amplitudeContrast"
+# Angle of the tilt axis relative to the detector x-axis, in degrees (TomoAcquisition).
+TILT_AXIS_ANGLE = "_acquisition._tiltAxisAngle"
 TRANSFORMATION_MATRIX = "_transform._matrix"
 ODD_EVEN_FN = "_oddEvenFileNames"
 
@@ -36,6 +38,7 @@ TILT_SERIES_FIELDS = [
     VOLTAGE,
     SPHERICAL_ABERRATION,
     AMPLITUDE_CONTRAST,
+    TILT_AXIS_ANGLE,
     TRANSFORMATION_MATRIX,
     ODD_EVEN_FN,
 ]
