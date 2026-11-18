@@ -1,7 +1,7 @@
 import ast
 import os
 from pathlib import Path
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Any, Optional, Tuple
 
 import numpy as np
 
@@ -94,6 +94,25 @@ class BaseConverter:
         )
 
     @staticmethod
+    def resolve_pixel_size(
+        sampling_rate: Any, header_pixel_size: Optional[float], what: str
+    ) -> float:
+        """Pixel/voxel size (Å) of an image: Scipion's sampling rate (what Scipion computes
+        with) or, if it is not stored, the one of the file header.
+
+        :param what: the image, for the error message.
+        :raises ValueError: if neither is known, as any value in Å would be wrong.
+        """
+        if sampling_rate is not None and float(sampling_rate) > 0:
+            return float(sampling_rate)
+        if header_pixel_size:
+            return float(header_pixel_size)
+        raise ValueError(
+            f"The pixel size of the {what} is unknown: Scipion does not store its "
+            f"sampling rate and its file header does not have it."
+        )
+
+    @staticmethod
     def _get_tomo_center(tomo_file: os.PathLike) -> List[float]:
         """Center of a tomogram (x, y, z), in voxels: Scipion's default origin."""
         img_info = get_mrc_info(tomo_file)
@@ -164,6 +183,31 @@ class BaseConverter:
             input=array_cs_name,
             output=physical_cs_name,
         )
+
+    @staticmethod
+    def _coordinate_rotations(
+        euler_matrices: List[Any],
+    ) -> Optional[List[List[List[float]]]]:
+        """Orientations of picked coordinates as CETS rotation matrices (reference/template
+        -> particle, as in cets-pytom_tm and cets-gapstop), from their Scipion
+        ``_eulerMatrix``, which stores the inverse (particle -> reference). Its shifts, if
+        any, are not part of the orientation.
+
+        :param euler_matrices: the Scipion 4x4 matrix of each coordinate (as stored in the
+        sqlite, a string, or None).
+        :returns: one 3x3 rotation per coordinate, or None if the coordinates have no
+        orientation: some matrix is missing, or all of them are the identity (Scipion's
+        default when the picking gives no orientation).
+        """
+        rotations = []
+        for matrix in euler_matrices:
+            if matrix is None or matrix == "None":
+                return None
+            values = ast.literal_eval(matrix) if isinstance(matrix, str) else matrix
+            rotations.append(np.array(values, dtype=float)[:3, :3])
+        if not rotations or all(np.allclose(r, np.eye(3)) for r in rotations):
+            return None
+        return [np.linalg.inv(r).tolist() for r in rotations]
 
     @staticmethod
     def _gen_subvolume_transforms(

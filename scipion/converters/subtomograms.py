@@ -4,6 +4,7 @@ from typing import Dict, List, Tuple
 
 from cets_data_model.models.models import (
     PointSet3D,
+    PointMatrixSet3D,
     ParticleMap,
     Average,
     AnnotationType,
@@ -18,7 +19,9 @@ from scipion.constants import (
     SUBTOMO_Y,
     SUBTOMO_Z,
     SUBTOMO_TRANSFORM_MATRIX,
+    SUBTOMO_COORD_MATRIX,
     SUBTOMO_VOL_NAME,
+    SAMPLING_RATE,
 )
 from scipion.converters.base_converter import BaseConverter
 from scipion.utils.utils_sqlite import connect_db, map_classes_table, get_row_value
@@ -31,7 +34,7 @@ class ScipionSetOfSubtomogras(BaseConverter):
         coords_pixel_size: float | None = None,
         tomo_db_path: os.PathLike | None = None,
         # out_directory: str | None = None
-    ) -> Tuple[PointSet3D, Average] | None:
+    ) -> Tuple[PointSet3D | PointMatrixSet3D, Average] | None:
         """Converts a set of subtomograms in Scipion sqlite format corresponding to the
         introduced tomogram identifier into CETS metadata.
 
@@ -40,7 +43,8 @@ class ScipionSetOfSubtomogras(BaseConverter):
         (Option A):
 
         * the picked coordinates -> a ``PointSet3D`` annotation (stored under
-          ``Region.annotations``), linked to its tomogram via ``source_tomogram_id``;
+          ``Region.annotations``), linked to its tomogram via ``source_tomogram_id``, or a
+          ``PointMatrixSet3D`` if they are oriented (see ``_coordinate_rotations``);
         * each extracted subvolume -> a ``ParticleMap`` (stored under ``Average.particle_maps``),
           linked back to a single picked coordinate via ``source_region_id`` +
           ``source_annotation_id`` (the region and the ``PointSet3D`` it lives in) plus
@@ -103,6 +107,7 @@ class ScipionSetOfSubtomogras(BaseConverter):
                 annotation_id = f"scipion_coords_{tomo_id}"
 
                 origin_3d = []
+                coord_matrices = []
                 particle_maps = []
                 rows = cursor.fetchall()
                 # Vector to refer the coordinates to the corner of the tomogram: read
@@ -127,7 +132,11 @@ class ScipionSetOfSubtomogras(BaseConverter):
                     # (Å) coordinate system plus exactly one canonical array_to_physical scale
                     # (the box voxel size), per the spec.
                     particle_name = f"particle_{coord_index:03d}"
-                    voxel_size = img_info.apix_x if img_info.apix_x else 1.0
+                    voxel_size = self.resolve_pixel_size(
+                        get_row_value(row, coord_set_class_dict, SAMPLING_RATE),
+                        img_info.apix_x,
+                        f"subtomogram {subtomo_fn}",
+                    )
                     array_cs, physical_cs = self._gen_coordinate_systems(
                         particle_name, ndim=3
                     )
@@ -154,9 +163,10 @@ class ScipionSetOfSubtomogras(BaseConverter):
                     subtomo_tr.output = physical_cs.name
                     subtomo_rot.input = physical_cs.name
                     subtomo_rot.output = physical_cs.name
-                    # TODO (open question #1): the coordinate Euler orientation
-                    # (SUBTOMO_COORD_MATRIX) has no home on PointSet3D. It is dropped here;
-                    # revisit if per-point orientation of the picked coordinate must be kept.
+                    # Orientation of the picked coordinate (see _coordinate_rotations)
+                    coord_matrices.append(
+                        get_row_value(row, coord_set_class_dict, SUBTOMO_COORD_MATRIX)
+                    )
                     if db_corner_offset is not None:
                         corner_offset = db_corner_offset
                     else:
@@ -229,15 +239,27 @@ class ScipionSetOfSubtomogras(BaseConverter):
                 else:
                     coordinate_systems = [tomo_array_cs]
                     coordinate_transformations = []
-                point_set = PointSet3D(
+                common_fields = dict(
                     id=annotation_id,
                     name=f"Scipion coordinates for {tomo_id}",
-                    annotation_type=AnnotationType.point_set_3D,
                     source_tomogram_id=tomo_id,
                     origin3D=origin_3d,
                     coordinate_systems=coordinate_systems,
                     coordinate_transformations=coordinate_transformations,
                 )
+                # Oriented picked coordinates keep their orientations (PointMatrixSet3D)
+                rotations = self._coordinate_rotations(coord_matrices)
+                point_set: PointSet3D | PointMatrixSet3D
+                if rotations is not None:
+                    point_set = PointMatrixSet3D(
+                        annotation_type=AnnotationType.point_matrix_set_3D,
+                        matrix3D=rotations,
+                        **common_fields,
+                    )
+                else:
+                    point_set = PointSet3D(
+                        annotation_type=AnnotationType.point_set_3D, **common_fields
+                    )
                 average = Average(
                     name=f"Scipion subtomograms for {tomo_id}",
                     particle_maps=particle_maps,

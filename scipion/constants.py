@@ -31,6 +31,15 @@ TILT_AXIS_ANGLE = "_acquisition._tiltAxisAngle"
 TRANSFORMATION_MATRIX = "_transform._matrix"
 ODD_EVEN_FN = "_oddEvenFileNames"
 
+# Fields of the acquisition (TomoAcquisition) kept in CETS. Scipion stores the acquisition
+# of each tilt-series in its row of the set; the tilt-images have a copy of some of them.
+ACQUISITION_FIELDS = [
+    VOLTAGE,
+    SPHERICAL_ABERRATION,
+    AMPLITUDE_CONTRAST,
+    TILT_AXIS_ANGLE,
+]
+
 TILT_SERIES_FIELDS = [
     TS_ID,
     FILE_NAME,
@@ -65,10 +74,12 @@ CTF_TOMO_SERIES_FIELDS = [
 # TOMOGRAM ###########################################
 ODD_EVEN_TOMOS_FN = "_halfMapFilenames"
 
-TOMOGRAM_FIELDS = [TS_ID, FILE_NAME, CTF_CORRECTED, ODD_EVEN_TOMOS_FN]
+# Sampling rate (Å/px) of an image or volume
+SAMPLING_RATE = "_samplingRate"
+
+TOMOGRAM_FIELDS = [TS_ID, FILE_NAME, CTF_CORRECTED, ODD_EVEN_TOMOS_FN, SAMPLING_RATE]
 
 # Fields used to refer the coordinates to the corner of the tomogram
-SAMPLING_RATE = "_samplingRate"
 ORIGIN_MATRIX = "_origin._matrix"
 TOMO_ORIGIN_FIELDS = [TS_ID, FILE_NAME, SAMPLING_RATE, ORIGIN_MATRIX]
 
@@ -102,4 +113,5 @@ SUBTOMO_FIELDS = [
     SUBTOMO_TRANSFORM_MATRIX,
     SUBTOMO_ID,
     SUBTOMO_VOL_NAME,
+    SAMPLING_RATE,
 ]

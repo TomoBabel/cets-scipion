@@ -20,6 +20,8 @@ from cets_data_model.models.models import (
 )
 from cets_data_model.utils.image_utils import get_mrc_info
 from scipion.constants import (
+    ACQUISITION_FIELDS,
+    SAMPLING_RATE,
     TS_ID,
     TILT_SERIES_FIELDS,
     FILE_NAME,
@@ -51,6 +53,16 @@ from scipion.utils.utils_sqlite import (
     get_from_obj_tbl,
     get_row_value,
 )
+
+
+@dataclass(frozen=True)
+class AcquisitionValues:
+    """Acquisition values of a Scipion tilt-series (TomoAcquisition) kept in CETS."""
+
+    voltage: Optional[float]
+    spherical_aberration: Optional[float]
+    amplitude_contrast: Optional[float]
+    tilt_axis_angle: Optional[float]
 
 
 @dataclass
@@ -147,29 +159,38 @@ class ScipionSetOfTiltSeries(BaseConverter):
         db_connection = connect_db(self.db_path)
         if db_connection is not None:
             with db_connection as conn:
-                # Map the table Classes and get some values from the table Objects
+                # Map the table Classes and read the row of each tilt-series from the
+                # table Objects (only the fields present: e.g. older sets do not have
+                # _ctfCorrected).
                 ts_set_class_dict = map_classes_table(conn)
-                ts_ids = get_from_obj_tbl(conn, TS_ID, ts_set_class_dict)
-                ctf_corrected_list = get_from_obj_tbl(
-                    conn, CTF_CORRECTED, ts_set_class_dict
+                cursor = conn.cursor()
+                set_fields = self._get_sql_fields(
+                    ts_set_class_dict,
+                    [TS_ID, CTF_CORRECTED, SAMPLING_RATE, *ACQUISITION_FIELDS],
                 )
+                cursor.execute(f'SELECT {set_fields} FROM "{OBJECTS_TBL}"')
+                ts_rows = cursor.fetchall()
+                if not ts_rows:
+                    raise ValueError(f"There are no tilt-series in {self.db_path}.")
+                first_ts_id = get_row_value(ts_rows[0], ts_set_class_dict, TS_ID)
 
                 # Map the table Classes of the first tilt-series
                 ts_class_dict = map_classes_table(
-                    conn, self._get_ts_classes_tbl_name(ts_ids[0])
+                    conn, self._get_ts_classes_tbl_name(first_ts_id)
                 )
 
                 # Sqlite fields of the data to be read from each tilt-image
                 ti_sql_fields = self._get_sql_fields(ts_class_dict, TILT_SERIES_FIELDS)
 
-                cursor = conn.cursor()
                 tilt_series_list = []
                 alignments_list = []
-                # Dataset-level acquisition metadata (constant across the set); built once
-                # from the first tilt-image row and referenced by every tilt-series.
-                instrument: Optional[Instrument] = None
-                acquisition_session: Optional[AcquisitionSession] = None
-                for i, ts_id in enumerate(ts_ids):
+                # Dataset-level acquisition metadata: one Instrument / AcquisitionSession
+                # per distinct set of values, shared by the tilt-series that have them.
+                acquisitions: Dict[
+                    AcquisitionValues, Tuple[Instrument, AcquisitionSession]
+                ] = {}
+                for ts_row in ts_rows:
+                    ts_id = get_row_value(ts_row, ts_set_class_dict, TS_ID)
                     print(f"tsId = {ts_id}. Loading the tilt-series...")
                     # Manage the CTFMetadata
                     ctf_md_list = ctf_md.get(ts_id, None) if ctf_md else None
@@ -190,13 +211,26 @@ class ScipionSetOfTiltSeries(BaseConverter):
                             f"tsId = {ts_id}. It is not in the tilt-series set "
                             f"{nominal_ts_db_path}, given to read the nominal tilt angles."
                         )
+                    if not rows:
+                        raise ValueError(f"tsId = {ts_id}. It has no tilt-images.")
+                    # Image size and pixel size (Å) of this tilt-series, used by all its
+                    # tilt-images (array_to_physical scale, alignment shifts in Å).
+                    self._read_stack_info(
+                        ts_id,
+                        rows[0],
+                        ts_class_dict,
+                        get_row_value(ts_row, ts_set_class_dict, SAMPLING_RATE),
+                    )
+                    # Acquisition of the tilt-series (Scipion's TomoAcquisition)
+                    values = self._read_acquisition(
+                        ts_row, ts_set_class_dict, rows[0], ts_class_dict
+                    )
+                    if values not in acquisitions:
+                        acquisitions[values] = self._build_acquisition(
+                            values, acquisitions
+                        )
+                    acquisition_session = acquisitions[values][1]
                     for row in rows:
-                        # Build the Instrument / AcquisitionSession once (values are the
-                        # same for every image in the set).
-                        if instrument is None:
-                            instrument, acquisition_session = self._build_acquisition(
-                                row, ts_class_dict
-                            )
                         ti, projection_alignment, odd_fn, even_fn = (
                             self._ti_from_sqlite_row(row, ts_class_dict, nominal_list)
                         )
@@ -220,12 +254,12 @@ class ScipionSetOfTiltSeries(BaseConverter):
                         path=ti_list[-1].path,
                         even_path=even_fn,
                         odd_path=odd_fn,
-                        ctf_corrected=bool(ctf_corrected_list[i]),
+                        ctf_corrected=self._to_bool(
+                            get_row_value(ts_row, ts_set_class_dict, CTF_CORRECTED)
+                        ),
                         images=ti_list,
                         # Link the tilt-series to its acquisition session.
-                        acquisition_session_id=(
-                            acquisition_session.id if acquisition_session else None
-                        ),
+                        acquisition_session_id=acquisition_session.id,
                     )
                     tilt_series_list.append(ts)
                     # Alignment for this tilt-series (meant to be placed under Region.alignments),
@@ -237,11 +271,11 @@ class ScipionSetOfTiltSeries(BaseConverter):
                         )
                     )
 
-                # Dataset-level collections (one element each for a single Scipion set).
-                instruments = [instrument] if instrument else []
-                acquisition_sessions = (
-                    [acquisition_session] if acquisition_session else []
-                )
+                # Dataset-level collections (one element each when all the tilt-series of
+                # the set share their acquisition, as usual). Instruments are shared by the
+                # sessions with the same voltage.
+                instruments = list({i.id: i for i, _ in acquisitions.values()}.values())
+                acquisition_sessions = [s for _, s in acquisitions.values()]
                 if out_directory:
                     write_ts_set_yaml(tilt_series_list, Path(out_directory))
                     write_alignment_set_yaml(
@@ -258,21 +292,34 @@ class ScipionSetOfTiltSeries(BaseConverter):
                 )
         return None
 
+    def _read_stack_info(
+        self,
+        ts_id: str,
+        ti_row: sqlite3.Row,
+        ts_class_dict: Dict[str, str],
+        sampling_rate: Optional[float],
+    ) -> None:
+        """Reads the image size of a tilt-series from its stack and sets its pixel size:
+        Scipion's sampling rate of the tilt-series or, if it is not stored, the one of the
+        stack header (see ``resolve_pixel_size``)."""
+        ts_file = get_row_value(ti_row, ts_class_dict, FILE_NAME)
+        ts_fn = self.scipion_prj_path / ts_file if ts_file else self.scipion_prj_path
+        img_info = get_mrc_info(ts_fn)
+        self.img_x = img_info.size_x
+        self.img_y = img_info.size_y
+        self.pixel_size = self.resolve_pixel_size(
+            sampling_rate, img_info.apix_x, f"tilt-series {ts_id}"
+        )
+
     def _ti_from_sqlite_row(
         self,
         row: sqlite3.Row,
         ts_class_dict: Dict[str, str],
         nominal_list: List[ScipionTiltAngle] | None = None,
     ) -> Tuple[TiltImage, ProjectionAlignment, Optional[str], Optional[str]]:
-        # Read image info
+        # Image size and pixel size: those of the tilt-series (see _read_stack_info)
         ts_file = get_row_value(row, ts_class_dict, FILE_NAME)
         ts_fn = self.scipion_prj_path / ts_file if ts_file else self.scipion_prj_path
-        if self.img_x < 0:
-            img_info = get_mrc_info(ts_fn)
-            self.img_x = img_info.size_x
-            self.img_y = img_info.size_y
-            # Merged (tilt-series) pixel size in Å; backs the array_to_physical scale.
-            self.pixel_size = img_info.apix_x if img_info.apix_x else 1.0
         # Get the odd / even filenames
         even_fn, odd_fn = None, None
         odd_even_fn = get_row_value(row, ts_class_dict, ODD_EVEN_FN)
@@ -519,31 +566,75 @@ class ScipionSetOfTiltSeries(BaseConverter):
         return matches[0] if matches else None
 
     @staticmethod
+    def _read_acquisition(
+        ts_row: sqlite3.Row,
+        ts_set_class_dict: Dict[str, str],
+        ti_row: sqlite3.Row,
+        ts_class_dict: Dict[str, str],
+    ) -> AcquisitionValues:
+        """Acquisition values of a tilt-series: voltage, spherical aberration, amplitude
+        contrast and tilt axis angle.
+
+        Scipion stores them in the acquisition of the tilt-series (TomoAcquisition), in its
+        row of the set; the tilt-images have a copy of some of them (not of the tilt axis
+        angle). Each value is read from the tilt-series row or, if it is not there (e.g.
+        older sets), from the first tilt-image. ``get_row_value`` returns None when a
+        column is absent.
+        """
+
+        def value(field: str) -> Optional[float]:
+            result = get_row_value(ts_row, ts_set_class_dict, field)
+            if result is None:
+                result = get_row_value(ti_row, ts_class_dict, field)
+            return float(result) if result is not None else None
+
+        return AcquisitionValues(
+            voltage=value(VOLTAGE),
+            spherical_aberration=value(SPHERICAL_ABERRATION),
+            amplitude_contrast=value(AMPLITUDE_CONTRAST),
+            tilt_axis_angle=value(TILT_AXIS_ANGLE),
+        )
+
+    @staticmethod
     def _build_acquisition(
-        row: sqlite3.Row, ts_class_dict: Dict[str, str]
+        values: AcquisitionValues,
+        existing: Dict[AcquisitionValues, Tuple[Instrument, AcquisitionSession]],
     ) -> Tuple[Instrument, AcquisitionSession]:
-        """Builds the dataset-level Instrument and AcquisitionSession from a Scipion
-        acquisition row.
+        """Builds the dataset-level Instrument and AcquisitionSession of an acquisition.
 
         ``voltage`` is a physical instrument property; ``spherical_aberration``,
         ``amplitude_contrast`` and ``tilt_axis_angle`` (degrees, relative to the detector
-        x-axis, as in Scipion's ``TomoAcquisition``) are kept at the session level.
-        ``get_row_value`` returns None
-        when a column is absent, so older sqlite files still work. ``dose_rate`` is
-        intentionally left unset: Scipion stores dose-per-frame (e-/A^2), not a per-second
-        rate (e-/A^2/s) as CETS ``dose_rate`` expects.
+        x-axis, as in Scipion's ``TomoAcquisition``) are kept at the session level. The
+        instrument of an ``existing`` acquisition with the same voltage is reused.
+        ``dose_rate`` is intentionally left unset: Scipion stores dose-per-frame (e-/A^2),
+        not a per-second rate (e-/A^2/s) as CETS ``dose_rate`` expects.
+
+        :param existing: the acquisitions already built; the new ids are numbered after
+        them (instrument_0, session_0, ...).
         """
-        instrument = Instrument(
-            id="instrument_0",
-            voltage=get_row_value(row, ts_class_dict, VOLTAGE),
+        instruments = {i.id: i for i, _ in existing.values()}
+        instrument = next(
+            (i for i in instruments.values() if i.voltage == values.voltage), None
         )
+        if instrument is None:
+            instrument = Instrument(
+                id=f"instrument_{len(instruments)}", voltage=values.voltage
+            )
         acquisition_session = AcquisitionSession(
-            id="session_0",
+            id=f"session_{len(existing)}",
             instrument_id=instrument.id,
-            amplitude_contrast=get_row_value(row, ts_class_dict, AMPLITUDE_CONTRAST),
-            spherical_aberration=get_row_value(
-                row, ts_class_dict, SPHERICAL_ABERRATION
-            ),
-            tilt_axis_angle=get_row_value(row, ts_class_dict, TILT_AXIS_ANGLE),
+            amplitude_contrast=values.amplitude_contrast,
+            spherical_aberration=values.spherical_aberration,
+            tilt_axis_angle=values.tilt_axis_angle,
         )
         return instrument, acquisition_session
+
+    @staticmethod
+    def _to_bool(value: object) -> Optional[bool]:
+        """Scipion Boolean stored in the sqlite (0/1, or as text) as a bool; None if the
+        set does not store it."""
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return value.strip().lower() in ("1", "true")
+        return bool(value)

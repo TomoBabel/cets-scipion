@@ -2,6 +2,7 @@ import os
 
 from cets_data_model.models.models import (
     PointSet3D,
+    PointMatrixSet3D,
     AnnotationType,
 )
 from scipion.constants import (
@@ -12,6 +13,7 @@ from scipion.constants import (
     COORD_Y,
     COORD_Z,
     COORD_SCORE,
+    EULER_MATRIX,
 )
 from scipion.converters.base_converter import BaseConverter
 from scipion.utils.utils_sqlite import connect_db, map_classes_table, get_row_value
@@ -24,12 +26,16 @@ class ScipionSetOfCoordinates3D(BaseConverter):
         tomo_db_path: os.PathLike,
         pixel_size: float | None = None,
         # out_directory: str | None = None
-    ) -> PointSet3D | None:
+    ) -> PointSet3D | PointMatrixSet3D | None:
         """Converts the set of coordinates corresponding to the introduced tomogram identifier
         into CETS metadata.
 
-        Picked coordinates are represented as a ``PointSet3D``
-        annotation. The ``PointSet3D`` holds the coordinates in ``origin3D``
+        Picked coordinates are represented as a ``PointSet3D`` annotation or, if they are
+        oriented (e.g. from template matching), as a ``PointMatrixSet3D`` whose ``matrix3D``
+        holds the rotation of each coordinate, from the reference/template to the particle
+        (the inverse of the Scipion ``_eulerMatrix``, as in cets-pytom_tm and cets-gapstop).
+        Coordinates whose matrices are all the identity (Scipion's default) have no
+        orientation. The ``PointSet3D`` holds the coordinates in ``origin3D``
         (an Nx3 array) and links back to the tomogram they were picked in through
         ``source_tomogram_id``. The score given by the picking program to each coordinate
         (Scipion ``Coordinate3D._score``) is stored in ``scores``, aligned with ``origin3D``;
@@ -85,13 +91,11 @@ class ScipionSetOfCoordinates3D(BaseConverter):
                 corner_offset = self._get_tomo_corner_offset(tomo_db_path, tomo_id)
                 origin_3d = []
                 scores = []
+                euler_matrices = []
                 for row in rows:
-                    # TODO (open question #1): the per-coordinate Euler orientation
-                    # (EULER_MATRIX) cannot be stored on a PointSet3D, which only carries
-                    # positions (origin3D) plus set-level transforms. If per-point
-                    # orientations must be preserved for picked coordinates, use
-                    # PointVectorSet3D / PointMatrixSet3D instead. For now only the
-                    # positions are converted.
+                    euler_matrices.append(
+                        get_row_value(row, coord_set_class_dict, EULER_MATRIX)
+                    )
                     origin_3d.append(
                         self._to_tomo_corner(
                             [
@@ -122,19 +126,32 @@ class ScipionSetOfCoordinates3D(BaseConverter):
                 else:
                     coordinate_systems = [array_cs]
                     coordinate_transformations = []
-                point_set = PointSet3D(
+                common_fields = dict(
                     # TODO (open question #3): id-generation policy. The tomogram id is
                     # used here so that AnnotationReference.source_annotation_id can resolve
                     # this annotation. It must be unique within its Region.annotations.
                     id=f"scipion_coords_{tomo_id}",
                     name=f"Scipion coordinates for {tomo_id}",
-                    annotation_type=AnnotationType.point_set_3D,
                     source_tomogram_id=tomo_id,
                     origin3D=origin_3d,
                     scores=[float(s) for s in scores] if has_scores else None,
                     coordinate_systems=coordinate_systems,
                     coordinate_transformations=coordinate_transformations,
                 )
+                # Oriented coordinates (e.g. from template matching) keep their
+                # orientations; the rest are just positions.
+                rotations = self._coordinate_rotations(euler_matrices)
+                point_set: PointSet3D | PointMatrixSet3D
+                if rotations is not None:
+                    point_set = PointMatrixSet3D(
+                        annotation_type=AnnotationType.point_matrix_set_3D,
+                        matrix3D=rotations,
+                        **common_fields,
+                    )
+                else:
+                    point_set = PointSet3D(
+                        annotation_type=AnnotationType.point_set_3D, **common_fields
+                    )
                 # if out_directory:
                 #     write_coords_set_yaml(point_set, tomo_id, Path(out_directory))
                 return point_set

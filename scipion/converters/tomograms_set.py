@@ -11,6 +11,7 @@ from scipion.constants import (
     TS_ID,
     ODD_EVEN_TOMOS_FN,
     CTF_CORRECTED,
+    SAMPLING_RATE,
 )
 from scipion.converters.base_converter import BaseConverter
 from scipion.utils.utils import write_tomo_set_yaml
@@ -62,7 +63,11 @@ class ScipionSetOfTomograms(BaseConverter):
                     # Every image (volume) gets an array (voxel, unitless) and a physical (Å)
                     # coordinate system plus exactly one canonical array_to_physical scale
                     # (the voxel size), per the spec.
-                    voxel_size = img_info.apix_x if img_info.apix_x else 1.0
+                    voxel_size = self.resolve_pixel_size(
+                        get_row_value(row, tomo_set_class_dict, SAMPLING_RATE),
+                        img_info.apix_x,
+                        f"tomogram {tomo_id}",
+                    )
                     array_cs, physical_cs = self._gen_coordinate_systems(
                         tomo_id, ndim=3
                     )
