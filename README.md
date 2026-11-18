@@ -144,8 +144,6 @@ ruff check . && ruff format .
 mypy scipion
 ```
 
-Example scripts are in `scipion/scripts/`.
-
 ### Tests
 
 | File | What it tests |
